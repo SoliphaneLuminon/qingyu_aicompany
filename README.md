@@ -1,3 +1,6 @@
+![Platform](https://img.shields.io/badge/platform-Android-green)
+![Kotlin](https://img.shields.io/badge/Kotlin-2.2.10-blue)
+![License](https://img.shields.io/badge/license-MIT-orange)
 # 轻语 QingYu
 
 一个完全本地运行的安卓 AI 陪伴应用。
