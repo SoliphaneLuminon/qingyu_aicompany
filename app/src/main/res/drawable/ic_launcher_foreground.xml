@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 轻语图标：对话气泡 + 心形 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#6C5CE7"
+        android:pathData="M54,26c-16.02,0 -29,10.3 -29,23c0,7.26 4.2,13.72 10.74,17.92L33,80l13.2,-6.6C48.7,73.8 51.3,74 54,74c16.02,0 29,-10.3 29,-23S70.02,26 54,26z" />
+    <path
+        android:fillColor="#FF7EA8"
+        android:pathData="M54,60.6l-1.06,-0.96C48.6,55.9 46,53.56 46,50.7c0,-2.34 1.84,-4.2 4.2,-4.2c1.34,0 2.62,0.62 3.8,1.6c1.18,-0.98 2.46,-1.6 3.8,-1.6c2.36,0 4.2,1.86 4.2,4.2c0,2.86 -2.6,5.2 -6.94,8.94L54,60.6z" />
+</vector>

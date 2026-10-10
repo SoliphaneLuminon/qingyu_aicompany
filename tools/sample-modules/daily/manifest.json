@@ -1,0 +1,9 @@
+{
+  "id": "daily",
+  "name": "每日签",
+  "version": "1.0.0",
+  "author": "轻语",
+  "entry": "index.js",
+  "description": "按日期轮换一句属于今天的话，作为一条消息写进当前对话。",
+  "permissions": ["now", "pushMessage"]
+}

@@ -1,0 +1,9 @@
+{
+  "id": "heart",
+  "name": "心动值",
+  "version": "1.0.0",
+  "author": "轻语",
+  "entry": "index.js",
+  "description": "读最近 20 条消息，按热词与提问密度算一个 0-100 的心动值，并把结果发回聊天。",
+  "permissions": ["recentMessages", "pushMessage", "setValue"]
+}

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="qy_window_bg">#FFFAF7F5</color>
+    <color name="qy_brand">#FF6C5CE7</color>
+    <color name="qy_brand_deep">#FF4B3FC4</color>
+    <color name="qy_accent">#FFFF7EA8</color>
+    <color name="qy_ink">#FF1B1A2E</color>
+    <color name="qy_launcher_bg">#FFEDE9FF</color>
+</resources>
