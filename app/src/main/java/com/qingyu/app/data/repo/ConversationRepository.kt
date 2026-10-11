@@ -16,13 +16,19 @@ class ConversationRepository(private val db: QingYuDatabase) {
         db.conversations.latestOrCreate(personaId)
 
     /**
-     * 首页的角色列表喵。
+     * 主界面的对话列表喵。
      *
      * 只发两条查询（角色一次、对话一次）后在内存里配对，而不是每个角色查一次——
      * 角色数量不多，但按角色逐个查库是典型的 N+1，划不来喵。
+     *
+     * **只包含没被移除的对话**：主界面管的是"正在进行的对话"，
+     * 被移除的那些不算在内（但它们还在库里，通讯录里能看到、发消息会回来）喵。
      */
     suspend fun chatList(): List<ChatListEntry> =
-        buildChatList(db.personas.list(), db.conversations.list())
+        buildChatList(db.personas.list(), db.conversations.listVisible())
+
+    /** 某个角色的那段对话，含被移除的（通讯录与资料页要看它）喵。 */
+    suspend fun conversationOf(personaId: Long): Conversation? = db.conversations.of(personaId)
 
     suspend fun list(): List<Conversation> = db.conversations.list()
 
@@ -102,16 +108,22 @@ class ConversationRepository(private val db: QingYuDatabase) {
 }
 
 /**
- * 把角色与它们各自的对话配成首页列表喵。
+ * 把角色与它们各自的对话配成主界面对话列表喵。
  *
- * 抽成顶层纯函数是为了能直接单测：排序与"没聊过怎么办"这两件事
- * 一旦错了，症状是"列表顺序莫名"或"新角色不见了"，很难从界面上看出来喵。
+ * 抽成顶层纯函数是为了能直接单测：排序与"谁该出现"这两件事
+ * 一旦错了，症状是"列表顺序莫名"或"刚聊过的角色不见了"，
+ * 很难从界面上看出来喵。
  *
  * 规则喵：
- * - 一个角色配它**最近活动**的那个对话；库里理论上每人只剩一个，
- *   取最近的是为了容忍老库没迁移干净的残留喵
- * - 排序照微信：**最近说过的排最前**；没聊过的用角色创建时间参与排序喵
- * - 没聊过的角色照样出现在列表里，`conversation` 为 null喵
+ * - 只收**有对话、那段对话没被移除、且至少有一条消息**的角色喵。
+ *   没聊过的人属于通讯录——微信的聊天列表也不会列出没聊过的人喵
+ * - **一条消息都没有的空对话不算聊过**：进角色时 `latestOrCreate` 会建出一个空对话，
+ *   如果就这么显示出来，点进去看一眼再退出就会平白多出一行喵。
+ *   有开场白的角色不受影响，因为开场白本身就是一条消息喵
+ * - **先取该角色最近的那段对话，再看它是否被移除**，而不是先滤掉被移除的再挑喵。
+ *   顺序反了的话，一段对话被"删除"后，更早的残留对话会顶上来，
+ *   看起来就像删除没生效喵
+ * - 排序照微信：最近说过的排最前喵
  */
 internal fun buildChatList(
     personas: List<com.qingyu.app.data.Persona>,
@@ -119,11 +131,13 @@ internal fun buildChatList(
 ): List<ChatListEntry> {
     val byPersona = conversations.groupBy { it.personaId }
     return personas
-        .map { persona ->
-            ChatListEntry(
-                persona = persona,
-                conversation = byPersona[persona.id]?.maxByOrNull { it.updatedAt },
-            )
+        .mapNotNull { persona ->
+            val latest = byPersona[persona.id]?.maxByOrNull { it.updatedAt }
+                ?: return@mapNotNull null
+            if (latest.hidden) return@mapNotNull null
+            val entry = ChatListEntry(persona = persona, conversation = latest)
+            if (entry.neverChatted) return@mapNotNull null
+            entry
         }
         .sortedByDescending { it.sortTime }
 }
