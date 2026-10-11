@@ -7,7 +7,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.qingyu.app.AppContainer
 import com.qingyu.app.data.Attachment
-import com.qingyu.app.data.AttachmentKind
 import com.qingyu.app.data.ChatMessage
 import com.qingyu.app.data.Conversation
 import com.qingyu.app.data.MessageKind
@@ -17,6 +16,7 @@ import com.qingyu.app.data.RedPacket
 import com.qingyu.app.data.Sticker
 import com.qingyu.app.data.repo.ChatEvent
 import com.qingyu.app.data.repo.ChatStreamState
+import com.qingyu.app.data.repo.SendBatchTracker
 import com.qingyu.app.media.StickerImporter
 import com.qingyu.app.core.TimeUtil
 import kotlinx.coroutines.Dispatchers
@@ -27,6 +27,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -43,13 +45,25 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private var streamJob: Job? = null
 
-    // ---- 排队发送队列 ----
-    private data class PendingInput(
-        val text: String,
-        val attachments: List<Attachment>,
-        val searchRequested: Boolean
-    )
-    private val pendingInputQueue = ArrayDeque<PendingInput>()
+    // ---- 发送合并 ----
+    /**
+     * 连发合并的规则状态喵。
+     *
+     * 它只记"欠了几轮生成"，**不记消息内容**——因为消息在用户按下发送的那一刻
+     * 就已经落库了，引擎读历史时自然会把同一批的都带上，不需要我们再攒一遍喵。
+     */
+    private val batchTracker = SendBatchTracker()
+
+    /** 当前这个合并窗口的计时协程喵。 */
+    private var windowJob: Job? = null
+
+    /**
+     * 发送流水线的串行锁喵。
+     *
+     * 它保证**同一时刻只有一条流水线在跑**，且后到的那条会在前一条退出后再看一眼
+     * 有没有新批次。没有它就会出现"窗口恰好在收尾时关闭 → 那一批没人处理"的丢消息竞态喵。
+     */
+    private val pipelineLock = Mutex()
 
     // ---- 打字机 ----
     /** 待逐字播放的已落库回复段喵。 */
@@ -177,7 +191,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun openPersona(persona: Persona) {
         streamJob?.cancel()
         typingJob?.cancel()
-        pendingInputQueue.clear()
+        batchTracker.reset()
         viewModelScope.launch {
             _state.update { it.copy(loading = true) }
             container.settings.update { it.copy(lastPersonaId = persona.id) }
@@ -273,7 +287,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun closeChat() {
         streamJob?.cancel()
         typingJob?.cancel()
-        pendingInputQueue.clear()
+        batchTracker.reset()
         _state.update {
             it.copy(
                 persona = null,
@@ -315,9 +329,25 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(needsSetup = false) }
     }
 
+    /**
+     * 发送喵。
+     *
+     * **发消息这件事与后端彻底解绑**喵：用户按下发送的这一瞬间，
+     * 消息就落库并上屏了，界面立刻能看到、也能立刻继续发下一条——
+     * 不管模型是不是正在生成、也不管有没有排队喵。
+     *
+     * 生成则交给合并窗口：从第一条起等 3 秒，窗口内的都算同一批一起注入；
+     * 窗口关闭时若上一轮还在生成，就排队等它**生成完毕**（不必等打字机播完）喵。
+     *
+     * 这样做同时修掉了两个老毛病喵：
+     * - 乐观消息用负数 id、落库后换真 id，导致 LazyColumn 的 key 变化，
+     *   `animateItem()` 会在旧位置冻结一个淡出副本（看着像融进背景、滑动时不动）
+     * - 模型正在生成时用户发不出消息，只能进一个看不见的队列喵
+     */
     fun send() {
         val current = _state.value
         val conversation = current.conversation ?: return
+        val persona = current.persona ?: return
         val text = current.input.trim()
 
         if (text.isEmpty() && current.pendingAttachments.isEmpty()) return
@@ -325,77 +355,117 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val attachments = current.pendingAttachments
         val search = current.searchEnabled
 
-        // 发出消息就把这段对话放回主界面：被"删除对话"移除过的会话，
-        // 只要用户又开口说话，它就该重新出现在列表里喵。
-        if (current.conversation.hidden) {
-            val conversationId = current.conversation.id
-            viewModelScope.launch {
-                db.conversations.unhide(conversationId)
-                refreshPersonas()
-            }
-        }
-
-        val userMsgTimestamp = System.currentTimeMillis()
-        val optimisticUserMsg = ChatMessage(
-            id = -userMsgTimestamp,
-            conversationId = conversation.id,
-            role = MessageRole.USER,
-            content = text,
-            attachments = attachments,
-            timestamp = userMsgTimestamp,
-        )
-
-        // 1. 立即上屏用户消息（乐观更新），同时清空输入框喵
+        // 清空输入区要**立刻**做：这是用户按下的直接反馈，不能等落库喵。
+        //
+        // 两个面板也一并收起喵：发送是一个"我说完了"的动作，
+        // 面板继续摊在那里会挡住刚发出去的消息，也让人以为还没发出去喵。
         _state.update {
             it.copy(
                 input = "",
                 pendingAttachments = emptyList(),
                 lastFailedInput = null,
-                messages = it.messages + optimisticUserMsg,
+                stickerPanelOpen = false,
+                plusPanelOpen = false,
             )
         }
 
-        // 检查 AI 是否正在生成或打字机是否在排队播放喵
-        val isBusy = current.stream.generating || typingQueue.isNotEmpty() || typingJob?.isActive == true
+        viewModelScope.launch {
+            // 先落库再上屏：消息从一开始就带着真实 id，列表 key 不会中途变化喵。
+            val saved = runCatching {
+                engine.appendUserMessage(conversation.id, text, attachments)
+            }.getOrNull()
+            if (saved == null) {
+                // 落库失败（极少见）：把输入还原回去，别让用户白打一段字喵。
+                _state.update {
+                    it.copy(
+                        input = text,
+                        pendingAttachments = attachments,
+                        banner = "消息没能存下来，请再试一次",
+                    )
+                }
+                return@launch
+            }
+            _state.update { it.copy(messages = it.messages + saved) }
 
-        if (isBusy) {
-            // 正在生成/播放中：存入等待队列，上屏后等待上一轮完成后自动触发喵
-            pendingInputQueue.add(PendingInput(text, attachments, search))
-        } else {
-            // 闲置状态：直接发起发送喵
-            launchSendJob(text, attachments, search)
+            // 发出去就把这段对话放回主界面喵。
+            if (conversation.hidden) {
+                db.conversations.unhide(conversation.id)
+                refreshPersonas()
+            }
+
+            onMessageQueued()
         }
     }
 
     /**
-     * 底层发起 API 调用的包装方法喵
+     * 一条消息已经落库上屏，交给合并窗口喵。
+     *
+     * 窗口逻辑与"这条消息是什么"无关，所以表情包、红包、语音转文字
+     * 全都走这里，行为一致喵。
      */
-    private fun launchSendJob(text: String, attachments: List<Attachment>, search: Boolean) {
+    private fun onMessageQueued() {
+        val opened = batchTracker.onSent(TimeUtil.now())
+        // 已有窗口开着：这条并进当前批次，等原来那个计时器到点即可喵。
+        if (!opened) return
+
+        windowJob?.cancel()
+        windowJob = viewModelScope.launch {
+            delay(SendBatchTracker.WINDOW_MS)
+            batchTracker.onWindowClosed()
+            drainBatches()
+        }
+    }
+
+    /**
+     * 把已封口的批次依次跑掉喵。
+     *
+     * **每次都起一条流水线**，靠 [pipelineLock] 串行化，而不是"看有没有活着的流水线"喵。
+     * 后者有个会丢消息的竞态：窗口恰好在流水线收尾那一刻关闭时，
+     * 新调用会看到 streamJob 仍是 active 而直接返回，那一批就永远没人处理了喵。
+     *
+     * 改成加锁后，后到的流水线会排队等前一条退出，进去再自己看一眼：
+     * 有批次就接着跑，没有就立刻结束——多起一个协程的代价可以忽略喵。
+     */
+    private fun drainBatches() {
+        streamJob = viewModelScope.launch {
+            pipelineLock.withLock {
+                while (true) {
+                    if (batchTracker.tryTakeReady()) {
+                        runOneBatch()
+                        continue
+                    }
+                    // 没有待办的批次：还有窗口开着就等它关，否则收工喵。
+                    val window = windowJob
+                    if (!batchTracker.hasOpenWindow || window == null) break
+                    // 等这个窗口的计时器到点；它到点会把批次封口，循环再取一次喵。
+                    window.join()
+                }
+                // 全部批次跑完，收掉"正在输入"的提示喵。
+                _state.update { it.copy(topBarTyping = false) }
+            }
+        }
+    }
+
+    /**
+     * 真正跑一轮生成喵。消息已经在库里了，所以这里不插任何东西喵。
+     *
+     * 本函数不自己起协程、也不 cancel [streamJob]：它就是流水线里的一步，
+     * 由 [drainBatches] 的循环串起来，跑完自然返回、接着跑下一批喵。
+     */
+    private suspend fun runOneBatch() {
         val current = _state.value
         val persona = current.persona ?: return
         val conversation = current.conversation ?: return
 
-        // 重置状态喵
-        _state.update {
-            it.copy(
-                stream = ChatStreamState(),
-                topBarTyping = false
-            )
-        }
+        _state.update { it.copy(stream = ChatStreamState(), topBarTyping = true) }
 
-        streamJob?.cancel()
-        streamJob = viewModelScope.launch {
-            delay(500)
-            _state.update { it.copy(topBarTyping = true) }
-
-            engine.send(
-                conversationId = conversation.id,
-                personaId = persona.id,
-                text = text,
-                attachments = attachments,
-                searchRequested = search,
-            ).collect { handleEvent(it) }
-        }
+        engine.generate(
+            conversationId = conversation.id,
+            personaId = persona.id,
+            // 联网开关按**这一轮开始时**的设置取：一批消息可能横跨用户切换开关，
+            // 但一轮检索只能有一个答案，取最新的即可喵。
+            searchRequested = _state.value.searchEnabled,
+        ).collect { handleEvent(it) }
     }
 
     // ------------------------------------------------------------ 语音
@@ -585,66 +655,26 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun sendSticker(sticker: Sticker) {
         val current = _state.value
         val conversation = current.conversation ?: return
-        val persona = current.persona ?: return
-        if (current.stream.generating) return
+        // 不拦"正在生成"：表情包也是消息，用户随时能发喵。
+        // 它会并进当前合并窗口，或排在当前这一轮之后由流水线接着处理喵。
 
-        _state.update {
-            it.copy(
-                stickerPanelOpen = false,
-                // 乐观上屏：立刻显示这个表情，不等落库往返喵。
-                //
-                // **必须连附件一起带上**喵。表情气泡是靠 message.attachments 里的图渲染的，
-                // 只给 kind 与名字的话，StickerBubble 找不到附件就会退化成一行文字，
-                // 于是表现为"刚发出去显示的是名字，等对方回复完才变成图"——
-                // 那一瞬间正是 reload() 从库里把附件读回来的时刻喵。
-                // 这里先造一个同形状的附件顶上，落库后的真附件会在 reload 时替换它喵。
-                messages = it.messages + ChatMessage(
-                    id = -System.currentTimeMillis(),
-                    conversationId = conversation.id,
-                    role = MessageRole.USER,
-                    content = sticker.name,
-                    timestamp = System.currentTimeMillis(),
-                    kind = MessageKind.STICKER,
-                    stickerId = sticker.id,
-                    attachments = listOf(
-                        Attachment(
-                            conversationId = conversation.id,
-                            kind = AttachmentKind.IMAGE,
-                            localPath = sticker.filePath,
-                            mimeType = sticker.mimeType,
-                            width = sticker.width,
-                            height = sticker.height,
-                            sizeBytes = sticker.sizeBytes,
-                            createdAt = System.currentTimeMillis(),
-                        ),
-                    ),
-                ),
-            )
-        }
+        _state.update { it.copy(stickerPanelOpen = false) }
 
-        if (conversation.hidden) {
-            viewModelScope.launch {
+        viewModelScope.launch {
+            // 与文字消息走同一条路：**先落库、再上屏**，然后交给合并窗口喵。
+            // 这样列表 key 不会中途变化，也不会出现"融进背景、滑动时不动"喵。
+            val saved = runCatching { container.stickers.send(conversation.id, sticker) }.getOrNull()
+                ?: return@launch
+            // 附件必须一起上屏：表情气泡靠 message.attachments 渲染图片喵。
+            val attached = db.attachments.listForMessage(saved.id)
+            _state.update { it.copy(messages = it.messages + saved.copy(attachments = attached)) }
+
+            if (conversation.hidden) {
                 db.conversations.unhide(conversation.id)
                 refreshPersonas()
             }
-        }
 
-        _state.update { it.copy(stream = ChatStreamState(), topBarTyping = false) }
-        streamJob?.cancel()
-        streamJob = viewModelScope.launch {
-            val saved = runCatching { container.stickers.send(conversation.id, sticker) }.getOrNull()
-                ?: return@launch
-            delay(400)
-            _state.update { it.copy(topBarTyping = true) }
-            engine.send(
-                conversationId = conversation.id,
-                personaId = persona.id,
-                // 名字就是文本那一半；图片那一半已经作为附件挂在 saved 上了喵。
-                text = sticker.name,
-                existingUserMessageId = saved.id,
-                attachments = db.attachments.listForMessage(saved.id),
-                searchRequested = _state.value.searchEnabled,
-            ).collect { handleEvent(it) }
+            onMessageQueued()
         }
     }
 
@@ -664,8 +694,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun sendRedPacket(amount: Double, wish: String) {
         val current = _state.value
         val conversation = current.conversation ?: return
-        val persona = current.persona ?: return
-        if (current.stream.generating) return
+        // 同表情包：红包也是消息，随时能发喵。
         if (amount <= 0.0) {
             _state.update { it.copy(banner = "金额得大于 0") }
             return
@@ -674,31 +703,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val packet = RedPacket(amount = amount.coerceAtMost(RedPacket.MAX_AMOUNT), wish = wish.trim())
         val modelText = packet.toModelText()
 
-        _state.update {
-            it.copy(
-                redPacketOpen = false,
-                messages = it.messages + ChatMessage(
-                    id = -System.currentTimeMillis(),
-                    conversationId = conversation.id,
-                    role = MessageRole.USER,
-                    content = modelText,
-                    timestamp = System.currentTimeMillis(),
-                    kind = MessageKind.RED_PACKET,
-                    payload = RedPacket.toPayload(packet),
-                ),
-            )
-        }
+        _state.update { it.copy(redPacketOpen = false) }
 
-        if (conversation.hidden) {
-            viewModelScope.launch {
-                db.conversations.unhide(conversation.id)
-                refreshPersonas()
-            }
-        }
-
-        _state.update { it.copy(stream = ChatStreamState(), topBarTyping = false) }
-        streamJob?.cancel()
-        streamJob = viewModelScope.launch {
+        viewModelScope.launch {
+            // 同样走"先落库、再上屏、交给合并窗口"这条路喵。
             val saved = runCatching {
                 val message = ChatMessage(
                     conversationId = conversation.id,
@@ -713,43 +721,42 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 message.copy(id = id)
             }.getOrNull() ?: return@launch
 
-            delay(400)
-            _state.update { it.copy(topBarTyping = true) }
-            engine.send(
-                conversationId = conversation.id,
-                personaId = persona.id,
-                text = modelText,
-                existingUserMessageId = saved.id,
-                searchRequested = _state.value.searchEnabled,
-            ).collect { handleEvent(it) }
+            _state.update { it.copy(messages = it.messages + saved) }
+
+            if (conversation.hidden) {
+                db.conversations.unhide(conversation.id)
+                refreshPersonas()
+            }
+
+            onMessageQueued()
         }
     }
 
     /**
-     * 检查并拉取等待队列中的下一条用户消息注入大模型喵
+     * 重试上一轮喵。
+     *
+     * 新的发送模型里，消息在用户按下发送的那一刻就已经落库了——
+     * 所以"重试"从来不是"重发消息"，而是**再跑一轮生成**喵。
+     * 以前这里会重新插入一条用户消息，那在新模型下会造成重复喵。
+     *
+     * 另外 `lastFailedInput` 这套状态其实一直是空的（从没被赋过非 null 值），
+     * 依赖它的旧实现等于永远不执行；这里改成直接看"最后一条是不是用户消息"喵。
      */
-    private fun checkAndProcessNextPendingInput() {
-        if (pendingInputQueue.isNotEmpty()) {
-            val nextInput = pendingInputQueue.removeFirst()
-            launchSendJob(nextInput.text, nextInput.attachments, nextInput.searchRequested)
-        }
-    }
-
     fun retryLast() {
         val current = _state.value
-        val persona = current.persona ?: return
-        val conversation = current.conversation ?: return
-        val pending = current.lastFailedInput ?: return
+        current.persona ?: return
+        current.conversation ?: return
         if (current.stream.generating) return
+        // 最后一条不是用户消息就没什么可重试的（例如角色已经回过话了）喵。
+        if (current.messages.lastOrNull()?.role != MessageRole.USER) return
+
         _state.update { it.copy(lastFailedInput = null) }
-        streamJob = viewModelScope.launch {
-            engine.send(
-                conversationId = conversation.id,
-                personaId = persona.id,
-                text = pending,
-                searchRequested = current.searchEnabled,
-            ).collect { handleEvent(it) }
-        }
+        // 重试是"立刻再跑一轮"，不走合并窗口——所以先欠一批，
+        // 再让流水线把它连同后面可能排着的批次一起跑掉喵。
+        batchTracker.reset()
+        batchTracker.onSent(TimeUtil.now())
+        batchTracker.onWindowClosed()
+        drainBatches()
     }
 
     fun regenerate(messageId: Long) {
@@ -762,7 +769,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         typingJob?.cancel()
         typingJob = null
         typingQueue.clear()
-        pendingInputQueue.clear()
+        batchTracker.reset()
 
         val target = current.messages.find { it.id == messageId }
         _state.update { state ->
@@ -808,7 +815,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun stopGenerating() {
         streamJob?.cancel()
         streamJob = null
-        pendingInputQueue.clear()
+        batchTracker.reset()
         viewModelScope.launch {
             _state.update { it.copy(stream = ChatStreamState()) }
             reload()
@@ -929,11 +936,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 viewModelScope.launch(Dispatchers.Main.immediate) {
                     _state.update { it.copy(banner = event.message, lastFailedInput = null, topBarTyping = false) }
                 }
-                // 异常发生时，继续尝试消费等待队列里的下一条喵
-                checkAndProcessNextPendingInput()
+                // 这一轮废了不必特殊处理：collect 返回后流水线的循环会接着跑下一批喵。
             }
 
             is ChatEvent.Finished -> {
+                // 打字机还没播完的话，reload 要等它播完再做，
+                // 否则正在打字的那条会被历史里的完成态顶掉、看起来像跳了一下喵。
                 if (typingQueue.isNotEmpty() || typingJob?.isActive == true) {
                     deferredReload = true
                 } else {
@@ -941,9 +949,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     viewModelScope.launch(Dispatchers.Main.immediate) {
                         _state.update { it.copy(topBarTyping = false) }
                     }
-                    // 生成结束且无需等待打字播放时，自动唤醒消费队列喵
-                    checkAndProcessNextPendingInput()
                 }
+                // **下一批由流水线的 while 循环接着跑**，不等打字机喵。
+                // 用户要求的是"处理完前一轮"＝生成完毕；让打字机（纯本地回放，
+                // 可能还要好几秒）挡住下一轮，会让用户觉得"我发了半天它不理我"喵。
+                // 这里刻意不自己再起协程：那会与流水线并存，变成两条线各跑一轮喵。
             }
         }
     }
@@ -1000,8 +1010,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             viewModelScope.launch(Dispatchers.Main.immediate) {
                 _state.update { it.copy(topBarTyping = false) }
             }
-            // 延迟 reload（打字排队）播放完成后，唤醒消费等待队列喵
-            checkAndProcessNextPendingInput()
         }
     }
 
