@@ -4,6 +4,7 @@ import com.qingyu.app.data.ChatMessage
 import com.qingyu.app.data.MessageKind
 import com.qingyu.app.data.MessageRole
 import com.qingyu.app.data.Persona
+import com.qingyu.app.data.repo.StickerEagerness
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -154,5 +155,45 @@ class StickerPromptRenderingTest {
         val system = turns.first().content
         assertTrue("不该教它怎么发", !system.contains("【表情包：名字】"))
         assertTrue("但仍要说清对方发的表情怎么对待", system.contains("表情包"))
+    }
+
+    @Test
+    fun `温度越高，提示词里的发表情包频率要求越积极`() {
+        // 用户要求：聊天温度越高，它发表情包的频率就越高喵。
+        fun systemFor(temperature: Double) = PromptBuilder.turns(
+            persona = persona(),
+            memories = emptyList(),
+            history = listOf(userSticker("开心")),
+            suffix = "",
+            burstReplies = false,
+            historyLimit = 20,
+            stickerNames = listOf("开心", "难过"),
+            stickerEagerness = StickerEagerness.levelFor(temperature),
+        ).first().content
+
+        val cold = systemFor(0.0)
+        val eager = systemFor(0.6)
+        val hot = systemFor(1.5)
+
+        assertTrue("低温该说几乎不用：$cold", cold.contains("几乎不用"))
+        assertTrue("0.6 该说「有符合的就发」：$eager", eager.contains("符合"))
+        assertTrue("高温该说非常频繁：$hot", hot.contains("非常频繁"))
+        assertTrue("三档文案不该一样", cold != eager && eager != hot)
+    }
+
+    @Test
+    fun `一个表情都没有时不提频率`() {
+        // 没表情可发还叮嘱它多发，它只会写出一条指令却被本地丢掉喵。
+        val system = PromptBuilder.turns(
+            persona = persona(),
+            memories = emptyList(),
+            history = listOf(userSticker("开心")),
+            suffix = "",
+            burstReplies = false,
+            historyLimit = 20,
+            stickerNames = emptyList(),
+            stickerEagerness = StickerEagerness.Level.CONSTANT,
+        ).first().content
+        assertTrue("不该出现频率说明：$system", !system.contains("发表情包的频率"))
     }
 }
