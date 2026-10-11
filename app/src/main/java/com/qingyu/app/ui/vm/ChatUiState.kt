@@ -5,6 +5,7 @@ import com.qingyu.app.data.ChatListEntry
 import com.qingyu.app.data.ChatMessage
 import com.qingyu.app.data.Conversation
 import com.qingyu.app.data.Persona
+import com.qingyu.app.data.Sticker
 import com.qingyu.app.data.repo.ChatStreamState
 import com.qingyu.app.data.repo.ContextSnapshot
 
@@ -49,6 +50,24 @@ data class ChatUiState(
     val searchEnabled: Boolean = false,
     /** 打开的大图喵。 */
     val previewImage: Attachment? = null,
+    /** 表情包面板是否展开喵。 */
+    val stickerPanelOpen: Boolean = false,
+    /** 「＋」扩展面板是否展开喵。 */
+    val plusPanelOpen: Boolean = false,
+    /** 表情包列表，常用的在前喵。 */
+    val stickers: List<Sticker> = emptyList(),
+    /** 正在导入表情包喵。 */
+    val importingStickers: Boolean = false,
+    /** 正在录音（按住说话）喵。 */
+    val recording: Boolean = false,
+    /** 录音已开始的时刻，用于显示秒数喵。 */
+    val recordingStartedAt: Long = 0L,
+    /** 是否处于实时语音通话中喵。 */
+    val inCall: Boolean = false,
+    /** 通话状态文案，例如「正在聆听…」喵。 */
+    val callStatus: String = "",
+    /** 红包编辑弹窗是否打开喵。 */
+    val redPacketOpen: Boolean = false,
 ) {
     val canSend: Boolean
         get() = (input.isNotBlank() || pendingAttachments.isNotEmpty()) &&
