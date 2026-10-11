@@ -19,14 +19,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.PersonAdd
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,7 +38,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,57 +46,37 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.qingyu.app.core.TimeUtil
 import com.qingyu.app.data.ChatListEntry
 import com.qingyu.app.data.Persona
 import com.qingyu.app.ui.components.EmptyState
 import com.qingyu.app.ui.components.PersonaAvatar
-import com.qingyu.app.ui.personas.PersonaEditorDialog
-import com.qingyu.app.ui.vm.ChatUiState
-import com.qingyu.app.ui.vm.ChatViewModel
-import com.qingyu.app.ui.vm.PersonasViewModel
 
 /**
- * 首页：角色列表喵。
+ * 主界面：对话列表喵。
  *
- * 布局照微信来：一行一个角色，左边头像、中间名字与最后一句、右边时间，
- * 行与行之间用极细分割线而不是卡片留白——微信是连续列表，卡片化会显得松散喵。
+ * 布局照微信：一行一段对话，左边头像、中间名字与最后一句、右边时间，
+ * 行间用极细分割线而不是卡片留白——微信是连续列表，卡片化会显得松散喵。
  *
- * 点一行直接进这个角色的对话（一个角色就是一段对话，不再有"新建对话"喵）；
- * 长按弹菜单做编辑 / 删除，与微信长按会话的操作位置一致喵。
- *
- * [viewModel] 与 [personaEditor] 都由根部注入：自己在这里 `viewModel()` 取一份，
- * 会与根持有的是同一个实例，看起来没问题，但两处各自维护列表状态时极易不同步——
- * 原来"新建角色后看不到"的 bug 正是这么来的，所以这里只读状态、不自己持有喵。
+ * 分工喵：**这里管对话，通讯录管角色**。所以
+ * - 只列出**有对话且没被移除**的角色；从没聊过的人属于通讯录，不占主界面喵
+ * - 长按菜单里是「删除对话」（= 从主界面移除，角色与记录都留着）喵
+ * - 右上角是搜索与加号：加号里只有「添加联系人」和「从备份导入聊天记录」喵
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
-    state: ChatUiState,
-    viewModel: ChatViewModel,
-    personaEditor: PersonasViewModel,
+    entries: List<ChatListEntry>,
     onOpenChat: (Persona) -> Unit,
-    onOpenSettings: () -> Unit,
+    onOpenSearch: () -> Unit,
+    onHideChat: (Persona) -> Unit,
+    onAddContact: () -> Unit,
+    onImportChat: () -> Unit,
+    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
     modifier: Modifier = Modifier,
 ) {
-    val snackbarHostState = remember { SnackbarHostState() }
-    var menuFor by remember { mutableStateOf<ChatListEntry?>(null) }
-    var deleteTarget by remember { mutableStateOf<Persona?>(null) }
-    val editorState by personaEditor.state.collectAsStateWithLifecycle()
-
-    // 编辑器改动过角色（新建 / 编辑 / 复制）或关掉弹窗后，把首页列表重算一遍喵。
-    // 这一步就是"新建角色后立刻能看到"的保证——只刷新角色页那份列表是不够的喵。
-    LaunchedEffect(editorState.personas, editorState.editorOpen) {
-        viewModel.refreshPersonas()
-    }
-
-    LaunchedEffect(state.banner) {
-        state.banner?.let {
-            snackbarHostState.showSnackbar(it)
-            viewModel.dismissBanner()
-        }
-    }
+    var plusMenu by remember { mutableStateOf(false) }
+    var hideTarget by remember { mutableStateOf<ChatListEntry?>(null) }
 
     Scaffold(
         modifier = modifier,
@@ -108,28 +86,46 @@ fun HomeScreen(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
                 title = { Text("轻语") },
                 actions = {
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Outlined.Settings, contentDescription = "设置")
+                    IconButton(onClick = onOpenSearch) {
+                        Icon(Icons.Outlined.Search, contentDescription = "搜索")
+                    }
+                    Box {
+                        IconButton(onClick = { plusMenu = true }) {
+                            Icon(Icons.Outlined.Add, contentDescription = "更多")
+                        }
+                        DropdownMenu(expanded = plusMenu, onDismissRequest = { plusMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("添加联系人") },
+                                leadingIcon = { Icon(Icons.Outlined.PersonAdd, null) },
+                                onClick = {
+                                    plusMenu = false
+                                    onAddContact()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("从备份导入聊天记录") },
+                                leadingIcon = { Icon(Icons.Outlined.ChatBubbleOutline, null) },
+                                onClick = {
+                                    plusMenu = false
+                                    onImportChat()
+                                },
+                            )
+                        }
                     }
                 },
             )
         },
-        floatingActionButton = {
-            FloatingActionButton(onClick = { personaEditor.createNew() }) {
-                Icon(Icons.Outlined.Add, contentDescription = "新建角色")
-            }
-        },
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { innerPadding ->
-        if (state.chatList.isEmpty()) {
+        if (entries.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding),
             ) {
                 EmptyState(
-                    title = "还没有角色",
-                    description = "点右下角的 ＋ 创建一个。\n一个角色就是一段对话，建好就能直接聊。",
+                    title = "还没有对话",
+                    description = "去「通讯录」添加一个联系人，\n或者点右上角的 ＋ 直接添加。",
                     icon = "💬",
                 )
             }
@@ -138,71 +134,49 @@ fun HomeScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding),
-                contentPadding = PaddingValues(bottom = 88.dp),
+                contentPadding = PaddingValues(bottom = 16.dp),
             ) {
-                items(state.chatList, key = { it.persona.id }) { entry ->
-                    ChatListRow(
-                        entry = entry,
-                        onClick = { onOpenChat(entry.persona) },
-                        onLongClick = { menuFor = entry },
-                    )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(start = 76.dp),
-                        thickness = 0.6.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
-                    )
+                items(entries, key = { it.persona.id }) { entry ->
+                    // animateItem：对话被移除后重新回来、或新对话出现时平滑让位，
+                    // 而不是"啪"地插进列表里喵。
+                    Column(modifier = Modifier.animateItem()) {
+                        ChatRow(
+                            entry = entry,
+                            onClick = { onOpenChat(entry.persona) },
+                            onLongClick = { hideTarget = entry },
+                        )
+                        HorizontalDivider(
+                            modifier = Modifier.padding(start = 76.dp),
+                            thickness = 0.6.dp,
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                        )
+                    }
                 }
             }
         }
     }
 
-    menuFor?.let { entry ->
-        DropdownMenu(expanded = true, onDismissRequest = { menuFor = null }) {
-            DropdownMenuItem(
-                text = { Text("编辑角色") },
-                leadingIcon = { Icon(Icons.Outlined.Edit, null) },
-                onClick = {
-                    personaEditor.edit(entry.persona)
-                    menuFor = null
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("删除角色", color = MaterialTheme.colorScheme.error) },
-                leadingIcon = {
-                    Icon(Icons.Outlined.Delete, null, tint = MaterialTheme.colorScheme.error)
-                },
-                onClick = {
-                    deleteTarget = entry.persona
-                    menuFor = null
-                },
-            )
-        }
-    }
-
-    deleteTarget?.let { target ->
+    // 长按：只给「删除对话」，语义是**从主界面移除**，不是删角色、也不删记录喵。
+    hideTarget?.let { entry ->
         AlertDialog(
-            onDismissRequest = { deleteTarget = null },
-            title = { Text("删除「${target.name}」？") },
-            text = { Text("这段对话与它记住的事都会一起删除，无法恢复。") },
+            onDismissRequest = { hideTarget = null },
+            title = { Text("删除这段对话？") },
+            text = {
+                Text(
+                    "「${entry.persona.name}」会从主界面移除，" +
+                        "但聊天记录、角色与它记住的事都会保留。\n\n" +
+                        "从通讯录点进去，或者再发一条消息，它就会回来。",
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
-                    viewModel.deletePersona(target)
-                    deleteTarget = null
-                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                    onHideChat(entry.persona)
+                    hideTarget = null
+                }) { Text("删除") }
             },
             dismissButton = {
-                TextButton(onClick = { deleteTarget = null }) { Text("取消") }
+                TextButton(onClick = { hideTarget = null }) { Text("取消") }
             },
-        )
-    }
-
-    if (editorState.editorOpen) {
-        PersonaEditorDialog(
-            draft = editorState.draft,
-            isNew = editorState.editing == null,
-            onChange = personaEditor::onDraftChange,
-            onDismiss = { personaEditor.closeEditor() },
-            onSave = { personaEditor.save() },
         )
     }
 }
@@ -210,12 +184,12 @@ fun HomeScreen(
 /**
  * 列表里的一行：头像 + 名字 + 最后一句 + 时间喵。
  *
- * 没聊过的角色也照常列出，副标题显示角色简介而不是留空——
- * 留白会让人以为出错了，简介顺便说明这个人是谁喵。
+ * 主界面只列有对话的角色，所以这里一定拿得到 conversation；
+ * 万一为空（并发下刚被清空）就退化成一句提示，不显示空白喵。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatListRow(
+private fun ChatRow(
     entry: ChatListEntry,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
@@ -245,11 +219,7 @@ private fun ChatListRow(
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        PersonaAvatar(
-            emoji = persona.avatarEmoji,
-            size = 48.dp,
-            emphasize = !entry.neverChatted,
-        )
+        PersonaAvatar(emoji = persona.avatarEmoji, size = 48.dp, emphasize = true)
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -260,11 +230,7 @@ private fun ChatListRow(
             )
             Spacer(Modifier.height(3.dp))
             Text(
-                text = if (entry.neverChatted) {
-                    persona.tagline.ifBlank { "还没聊过，点一下开始" }
-                } else {
-                    conversation?.lastMessagePreview.orEmpty().ifBlank { "开始聊天吧" }
-                },
+                text = conversation?.lastMessagePreview.orEmpty().ifBlank { "开始聊天吧" },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -273,7 +239,7 @@ private fun ChatListRow(
         }
         Spacer(Modifier.width(10.dp))
         Text(
-            text = if (entry.neverChatted) "" else TimeUtil.smart(entry.sortTime),
+            text = TimeUtil.smart(entry.sortTime),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
