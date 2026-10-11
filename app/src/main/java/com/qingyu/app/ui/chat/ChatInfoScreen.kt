@@ -65,7 +65,7 @@ import com.qingyu.app.ui.components.PersonaAvatar
 fun ChatInfoScreen(
     persona: Persona,
     conversation: Conversation?,
-    personaAvatar: @Composable () -> Unit = { PersonaAvatar(emoji = persona.avatarEmoji, size = 52.dp, emphasize = true) },
+    personaAvatar: @Composable () -> Unit = { PersonaAvatar(persona = persona, size = 52.dp, emphasize = true) },
     onBack: () -> Unit,
     onOpenPersona: () -> Unit,
     onFavoriteConversation: () -> Unit,
