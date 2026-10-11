@@ -36,9 +36,15 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.unit.dp
 import com.qingyu.app.data.Persona
 import com.qingyu.app.ui.components.LabelWithHelp
+import com.qingyu.app.ui.components.PersonaAvatar
 import com.qingyu.app.ui.settings.HelpTexts
 
-/** 可选头像：只用 emoji，省掉图床和裁剪，也更容易做出个性喵。 */
+/**
+ * 可选头像 emoji 喵。
+ *
+ * 与"从相册上传"并存而不是取代：emoji 零成本、不占空间，
+ * 随手建个角色时比翻相册快得多；上传头像留给认真捏的角色喵。
+ */
 private val EMOJI_CHOICES = listOf(
     "🌙", "🌊", "🔥", "🌸", "🍃", "⭐", "🫧", "🐱", "🐰", "🦊",
     "☕", "🎧", "📚", "🕯️", "🌧️", "🧸", "🍀", "🎐",
@@ -57,6 +63,10 @@ fun PersonaEditorDialog(
     onChange: ((Persona) -> Persona) -> Unit,
     onDismiss: () -> Unit,
     onSave: () -> Unit,
+    /** 点「从相册上传」时回调；由外壳去拉起系统相册与裁剪页喵。 */
+    onPickAvatar: () -> Unit = {},
+    /** 点「用 emoji」时清掉自定义头像喵。 */
+    onClearAvatar: () -> Unit = {},
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -78,7 +88,7 @@ fun PersonaEditorDialog(
                     Spacer(Modifier.width(10.dp))
                     // 头像预览跟着选择变，轻轻弹一下，反馈更即时喵。
                     val avatarBump = remember { Animatable(1f) }
-                    LaunchedEffect(draft.avatarEmoji) {
+                    LaunchedEffect(draft.avatarEmoji, draft.avatarImage) {
                         avatarBump.snapTo(1.15f)
                         avatarBump.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 600f))
                     }
@@ -87,14 +97,34 @@ fun PersonaEditorDialog(
                             .scale(avatarBump.value)
                             .clip(RoundedCornerShape(14.dp))
                             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                            .padding(horizontal = 14.dp, vertical = 14.dp),
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
                     ) {
-                        Text(text = draft.avatarEmoji.ifBlank { "🌙" }, style = MaterialTheme.typography.titleLarge)
+                        // 有自定义头像就显示它，否则退回 emoji 喵。
+                        if (draft.avatarImage.isNotBlank()) {
+                            PersonaAvatar(persona = draft, size = 34.dp, emphasize = true)
+                        } else {
+                            Text(
+                                text = draft.avatarEmoji.ifBlank { "🌙" },
+                                style = MaterialTheme.typography.titleLarge,
+                            )
+                        }
                     }
                 }
 
                 Spacer(Modifier.height(10.dp))
-                Text("头像", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Text(
+                        text = "头像",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    // 上传与 emoji 两条路并存：emoji 快，上传像微信那样能捏出真头像喵。
+                    TextButton(onClick = onPickAvatar) { Text("从相册上传") }
+                    if (draft.avatarImage.isNotBlank()) {
+                        TextButton(onClick = onClearAvatar) { Text("用 emoji") }
+                    }
+                }
                 Spacer(Modifier.height(6.dp))
                 // 两行 emoji 选择器喵
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
