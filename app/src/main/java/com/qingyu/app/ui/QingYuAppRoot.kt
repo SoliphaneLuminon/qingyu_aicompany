@@ -1,5 +1,11 @@
 package com.qingyu.app.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -94,6 +100,30 @@ private fun rememberImeBottomInset(): Dp =
     with(LocalDensity.current) { WindowInsets.ime.getBottom(this).toDp() }
 
 /**
+ * 二级页面（角色 / 搜索 / 模块 / 调试）的入场动画喵。
+ *
+ * 这几页在导航上是"提前 return"的独立分支，没有常驻容器可以承载进出场，
+ * 所以只做入场：淡入 + 一点点向右推进，给出"进入了新一屏"的方向感喵。
+ * 位移刻意压得很小（宽度的 1/14），太大反而显得卡顿喵。
+ */
+@Composable
+private fun ScreenEnter(content: @Composable () -> Unit) {
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { visible = true }
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(animationSpec = tween(durationMillis = 180)) +
+            slideInHorizontally(
+                animationSpec = tween(durationMillis = 240),
+                initialOffsetX = { width -> width / 14 },
+            ),
+        exit = fadeOut(animationSpec = tween(durationMillis = 120)),
+    ) {
+        content()
+    }
+}
+
+/**
  * 应用外壳喵。
  *
  * 导航用状态机而不是 Navigation 组件：全局只有 5 个页面，其中 4 个是底部标签喵，
@@ -131,33 +161,37 @@ fun QingYuAppRoot(container: AppContainer) {
 
     when (val screen = shellState.screen) {
         is AppScreen.Personas -> {
-            PersonasScreen(
-                onBack = back,
-                onPickPersona = { personaId ->
-                    val persona = shellState.personas.firstOrNull { it.id == personaId }
-                    if (persona != null) chatViewModel.openPersona(persona)
-                    tab = HomeTab.CHAT
-                    back()
-                },
-            )
+            ScreenEnter {
+                PersonasScreen(
+                    onBack = back,
+                    onPickPersona = { personaId ->
+                        val persona = shellState.personas.firstOrNull { it.id == personaId }
+                        if (persona != null) chatViewModel.openPersona(persona)
+                        tab = HomeTab.CHAT
+                        back()
+                    },
+                )
+            }
             return
         }
 
         is AppScreen.Search -> {
-            SearchScreen(
-                conversationId = screen.conversationId.takeIf { it > 0L } ?: (chatState.conversation?.id ?: 0L),
-                onBack = back,
-            )
+            ScreenEnter {
+                SearchScreen(
+                    conversationId = screen.conversationId.takeIf { it > 0L } ?: (chatState.conversation?.id ?: 0L),
+                    onBack = back,
+                )
+            }
             return
         }
 
         is AppScreen.Modules -> {
-            ModulesScreen(onBack = back)
+            ScreenEnter { ModulesScreen(onBack = back) }
             return
         }
 
         is AppScreen.Debug -> {
-            DebugScreen(state = chatState, onBack = back)
+            ScreenEnter { DebugScreen(state = chatState, onBack = back) }
             return
         }
 
@@ -235,31 +269,39 @@ fun QingYuAppRoot(container: AppContainer) {
             // 外壳已经为底部让出的高度（标签栏 / 系统导航栏），交给聊天页做减法喵。
             val reservedBottom = innerPadding.calculateBottomPadding()
             Box(modifier = Modifier.padding(innerPadding)) {
-                when (tab) {
-                    HomeTab.CHAT -> ChatScreen(
-                        state = chatState,
-                        viewModel = chatViewModel,
-                        speaking = speaking,
-                        showReasoning = settings.showReasoning,
-                        onOpenDrawer = { scope.launch { drawerState.open() } },
-                        onOpenPersonas = { shellViewModel.navigate(AppScreen.Personas) },
-                        onOpenSettings = { tab = HomeTab.SETTINGS },
-                        onOpenSearch = { shellViewModel.navigate(AppScreen.Search(chatState.conversation?.id ?: 0L)) },
-                        onOpenDebug = { shellViewModel.navigate(AppScreen.Debug) },
-                        imeBottomInset = imeBottom,
-                        reservedBottomInset = reservedBottom,
-                    )
+                // 底部标签切换时做一次交叉淡入淡出：不引入滑动是因为四个页面宽度都占满，
+                // 横向位移反而会让人以为可以左右滑，淡入更符合"换了一屏"的直觉喵。
+                Crossfade(
+                    targetState = tab,
+                    animationSpec = tween(durationMillis = 220),
+                    label = "homeTab",
+                ) { current ->
+                    when (current) {
+                        HomeTab.CHAT -> ChatScreen(
+                            state = chatState,
+                            viewModel = chatViewModel,
+                            speaking = speaking,
+                            showReasoning = settings.showReasoning,
+                            onOpenDrawer = { scope.launch { drawerState.open() } },
+                            onOpenPersonas = { shellViewModel.navigate(AppScreen.Personas) },
+                            onOpenSettings = { tab = HomeTab.SETTINGS },
+                            onOpenSearch = { shellViewModel.navigate(AppScreen.Search(chatState.conversation?.id ?: 0L)) },
+                            onOpenDebug = { shellViewModel.navigate(AppScreen.Debug) },
+                            imeBottomInset = imeBottom,
+                            reservedBottomInset = reservedBottom,
+                        )
 
-                    HomeTab.FAVORITES -> FavoritesScreen(
-                        container = container,
-                        personaId = chatState.persona?.id ?: 0L,
-                    )
+                        HomeTab.FAVORITES -> FavoritesScreen(
+                            container = container,
+                            personaId = chatState.persona?.id ?: 0L,
+                        )
 
-                    HomeTab.MEMORY -> MemoryScreen(
-                        personaId = chatState.persona?.id ?: 0L,
-                    )
+                        HomeTab.MEMORY -> MemoryScreen(
+                            personaId = chatState.persona?.id ?: 0L,
+                        )
 
-                    HomeTab.SETTINGS -> SettingsScreen(container = container)
+                        HomeTab.SETTINGS -> SettingsScreen(container = container)
+                    }
                 }
             }
         }
