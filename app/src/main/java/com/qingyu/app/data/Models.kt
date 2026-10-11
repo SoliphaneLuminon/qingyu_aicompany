@@ -21,6 +21,24 @@ enum class MessageRole(val wire: String) {
     }
 }
 
+/**
+ * 消息的**结构类型**喵。
+ *
+ * 与 [MessageRole] 正交：role 说的是"谁发的"，kind 说的是"这是什么内容"喵。
+ * 表情包与红包都不是纯文本，界面上要渲染成卡片、送给模型时也要转写成一句人话，
+ * 所以必须能一眼分辨，不能靠解析 content 里的标记喵。
+ */
+enum class MessageKind(val wire: String) {
+    TEXT("text"),
+    STICKER("sticker"),
+    RED_PACKET("red_packet");
+
+    companion object {
+        fun fromWire(raw: String?): MessageKind =
+            entries.firstOrNull { it.wire.equals(raw, ignoreCase = true) } ?: TEXT
+    }
+}
+
 /** 一条聊天消息。[id] 为 0 表示尚未落库喵。 */
 data class ChatMessage(
     val id: Long = 0L,
@@ -39,8 +57,90 @@ data class ChatMessage(
     val attachments: List<Attachment> = emptyList(),
     /** 这条回复用到的联网搜索结果（助手消息喵）。 */
     val searchResults: List<SearchHit> = emptyList(),
+    /** 这条消息是普通文字、表情包还是红包喵。 */
+    val kind: MessageKind = MessageKind.TEXT,
+    /** 表情包消息对应的表情 id；[MessageKind.STICKER] 时有效喵。 */
+    val stickerId: Long = 0L,
+    /**
+     * 结构化消息的原始数据喵。
+     *
+     * 红包的金额与留言存在这里，**而不是从 [content] 里反解**喵。
+     * content 是给模型看的自然语言（「（发了一个 8.88 元的红包…）」），
+     * 它的措辞随时可能调整；界面却要拿金额去画卡片。
+     * 让界面去正则匹配自己刚写下的那句话，等于把两件事绑死：
+     * 以后改一个字的文案，红包卡片就会显示错喵。
+     */
+    val payload: String = "",
 ) {
     val hasImages: Boolean get() = attachments.any { it.isImage }
+}
+
+/**
+ * 一个表情包喵。
+ *
+ * [name] 会作为文字内容参与对话，所以它是这个表情"是什么意思"的载体喵；
+ * [filePath] 指向应用私有目录里的图片文件喵。
+ */
+data class Sticker(
+    val id: Long = 0L,
+    val name: String,
+    val filePath: String,
+    val mimeType: String = "image/png",
+    val width: Int = 0,
+    val height: Int = 0,
+    val sizeBytes: Long = 0L,
+    val useCount: Int = 0,
+    val sortOrder: Int = 0,
+    val createdAt: Long = 0L,
+)
+
+/**
+ * 红包喵。
+ *
+ * **纯虚拟**：没有充值、没有支付、不接任何真实货币，金额由用户自己填喵。
+ * 它的意义是把"我给你发了多少钱"这件事作为一条结构化消息送进上下文，
+ * 让角色能像真的收到红包那样回应喵。
+ */
+data class RedPacket(
+    /** 金额（元）。允许小数喵。 */
+    val amount: Double,
+    /** 红包上的祝福语，可空喵。 */
+    val wish: String = "",
+) {
+    /** 送给模型看的描述，例如「（发了一个 8.88 元的红包，留言：请你喝奶茶）」喵。 */
+    fun toModelText(): String {
+        val amountText = formatAmount(amount)
+        return if (wish.isBlank()) {
+            "（发了一个 $amountText 元的红包）"
+        } else {
+            "（发了一个 $amountText 元的红包，留言：$wish）"
+        }
+    }
+
+    companion object {
+        /** 金额显示：整数不带小数点，小数保留两位喵。 */
+        fun formatAmount(amount: Double): String =
+            if (amount % 1.0 == 0.0) amount.toLong().toString() else "%.2f".format(amount)
+
+        /** 红包金额上限，避免手滑输入天文数字让角色反应失真喵。 */
+        const val MAX_AMOUNT = 99999.0
+
+        /** 序列化成消息的 payload 字段；用 JSON 而不是自定义分隔符，金额与留言里出现分隔符也不会串味喵。 */
+        fun toPayload(packet: RedPacket): String =
+            org.json.JSONObject()
+                .put("amount", packet.amount)
+                .put("wish", packet.wish)
+                .toString()
+
+        /** 从 payload 还原；解析不出来返回 null，界面据此退化成一句纯文本喵。 */
+        fun fromPayload(payload: String): RedPacket? {
+            if (payload.isBlank()) return null
+            return runCatching {
+                val json = org.json.JSONObject(payload)
+                RedPacket(amount = json.optDouble("amount", 0.0), wish = json.optString("wish"))
+            }.getOrNull()?.takeIf { it.amount > 0.0 }
+        }
+    }
 }
 
 /** 附件种类。图片是当前唯一的实现，留出枚举是为了后续加语音/文件喵。 */
@@ -127,6 +227,13 @@ data class Persona(
     val id: Long = 0L,
     val name: String,
     val avatarEmoji: String = "🌙",
+    /**
+     * 自定义头像的文件名（存在应用私有目录 `files/avatars/`），空串表示仍用 [avatarEmoji] 喵。
+     *
+     * 存**文件名**而不是绝对路径：应用私有目录的绝对路径会随安装位置变化，
+     * 升级或迁移后老路径就失效了；文件名是稳定的，取的时候再拼目录喵。
+     */
+    val avatarImage: String = "",
     /** 一句话简介喵。 */
     val tagline: String = "",
     /** 系统提示词：决定说话风格与人格喵。 */
