@@ -64,6 +64,9 @@ import com.qingyu.app.data.MemoryCategory
 import com.qingyu.app.data.MemoryItem
 import com.qingyu.app.data.db.MemoryStats
 import com.qingyu.app.ui.components.EmptyState
+import com.qingyu.app.ui.components.HelpDot
+import com.qingyu.app.ui.components.LabelWithHelp
+import com.qingyu.app.ui.settings.HelpTexts
 import com.qingyu.app.ui.vm.MemoryViewModel
 
 /** 长期记忆：这里写下的东西会被注入到对话里，并且会随时间慢慢淡忘喵。 */
@@ -479,7 +482,7 @@ private fun MemoryEditorDialog(
                 OutlinedTextField(
                     value = content,
                     onValueChange = onContent,
-                    label = { Text("记住的事（一句话）") },
+                    label = { LabelWithHelp("记住的事（一句话）", HelpTexts.memoryContent) },
                     minLines = 2,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -487,7 +490,7 @@ private fun MemoryEditorDialog(
                     OutlinedTextField(
                         value = subject,
                         onValueChange = onSubject,
-                        label = { Text("主语") },
+                        label = { LabelWithHelp("主语", HelpTexts.memoryTriple) },
                         singleLine = true,
                         modifier = Modifier.weight(1f),
                     )
@@ -515,11 +518,15 @@ private fun MemoryEditorDialog(
                         modifier = Modifier.weight(1f),
                     )
                 }
-                Text(
-                    text = "重要度 $importance",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Medium,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "重要度 $importance",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    HelpDot(content = HelpTexts.memoryImportance, size = 15.dp)
+                }
                 Slider(
                     value = importance.toFloat(),
                     onValueChange = { onImportance(it.toInt().coerceIn(1, 10)) },
@@ -531,7 +538,11 @@ private fun MemoryEditorDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("核心人设", style = MaterialTheme.typography.bodyMedium)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("核心人设", style = MaterialTheme.typography.bodyMedium)
+                            Spacer(Modifier.width(6.dp))
+                            HelpDot(content = HelpTexts.memoryPermanent, size = 15.dp)
+                        }
                         Text(
                             "不衰减、不冷却、每轮都记得",
                             style = MaterialTheme.typography.labelSmall,
