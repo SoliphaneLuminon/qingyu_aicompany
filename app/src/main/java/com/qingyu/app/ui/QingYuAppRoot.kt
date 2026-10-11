@@ -45,6 +45,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qingyu.app.AppContainer
@@ -302,8 +304,13 @@ fun QingYuAppRoot(container: AppContainer) {
 
     // 角色编辑器与删除确认由根部统一渲染：主界面、通讯录、资料页三处都可能触发它们，
     // 放在这里才能保证只有一份实例、状态不会各说各话喵。
+    //
+    // 裁剪期间**刻意不渲染编辑器**喵：两者都是独立窗口（AlertDialog 内部也是 Dialog），
+    // 两个弹窗窗口谁在上层要看窗口的创建顺序，不是我们能稳稳控制的。
+    // 让它们不同时存在，顺序问题就不存在了——裁完 croppingAvatarUri 归空，
+    // 编辑器自然带着新头像回来，草稿一直存在 ViewModel 里不会丢喵。
     val editorState by personaEditor.state.collectAsStateWithLifecycle()
-    if (editorState.editorOpen) {
+    if (editorState.editorOpen && croppingAvatarUri == null) {
         PersonaEditorDialog(
             draft = editorState.draft,
             isNew = editorState.editing == null,
@@ -333,6 +340,47 @@ fun QingYuAppRoot(container: AppContainer) {
             dismissButton = {
                 TextButton(onClick = { personaEditor.cancelDelete() }) { Text("取消") }
             },
+        )
+    }
+
+    // ---------------------------------------------------------------- 头像裁剪
+    // 位置很关键，两件事都要满足喵：
+    //
+    // 1. **必须在 when 之前**喵。下面那个 when 的每个分支都提前 `return`，
+    //    从「通讯录 → 角色资料 → 编辑」进来时 screen 是 PersonaDetail，
+    //    代码根本走不到 when 之后——裁剪页连组合都不会发生喵。
+    // 2. **必须是独立窗口（Dialog）**喵。裁剪是"必须给出结果才能继续"的一步，
+    //    要盖住整个界面；放进主窗口的布局流里会受 Scaffold 与对话覆盖层影响喵。
+    //
+    // 两条合起来才是"选图后没进裁剪页"的完整原因喵。
+    if (croppingAvatarUri != null) {
+        Dialog(
+            onDismissRequest = { croppingAvatarUri = null },
+            properties = DialogProperties(
+                // 关掉平台默认宽度限制，否则裁剪页会被挤成一个小小的居中卡片喵。
+                usePlatformDefaultWidth = false,
+                // 裁剪页自己铺满全屏并处理系统栏，不让弹窗再叠一层 inset 喵。
+                decorFitsSystemWindows = false,
+            ),
+        ) {
+            AvatarCropScreen(
+                source = croppingAvatarUri!!,
+                onCancel = { croppingAvatarUri = null },
+                onConfirm = { bitmap ->
+                    personaEditor.applyCroppedAvatar(bitmap)
+                    croppingAvatarUri = null
+                },
+            )
+        }
+    }
+
+    // ---------------------------------------------------------------- 发红包
+    // 同样放在 when 之前：它从聊天页触发，而聊天页是盖在 Home 之上的一层，
+    // 放这里才不会因为某个分支提前 return 而弹不出来喵。
+    if (chatState.redPacketOpen) {
+        RedPacketDialog(
+            onDismiss = { chatViewModel.closeRedPacket() },
+            onSend = { amount, wish -> chatViewModel.sendRedPacket(amount, wish) },
         )
     }
 
@@ -642,29 +690,5 @@ fun QingYuAppRoot(container: AppContainer) {
                 )
             }
         }
-    }
-
-    // ---------------------------------------------------------------- 头像裁剪
-    // 放在最外层（连角色编辑弹窗之上）：裁剪是"必须给出结果才能继续"的一步，
-    // 底下露出的是相册选的原图，弹窗留在后面不影响，回来还能接着改别的字段喵。
-    croppingAvatarUri?.let { uri ->
-        AvatarCropScreen(
-            source = uri,
-            onCancel = { croppingAvatarUri = null },
-            onConfirm = { bitmap ->
-                personaEditor.applyCroppedAvatar(bitmap)
-                croppingAvatarUri = null
-            },
-        )
-    }
-
-    // ---------------------------------------------------------------- 发红包
-    // 与裁剪页同级放在最外层：它可能在对话里触发（聊天页盖着主界面），
-    // 若放在 Scaffold 里面会被对话覆盖层压住、根本点不到喵。
-    if (chatState.redPacketOpen) {
-        RedPacketDialog(
-            onDismiss = { chatViewModel.closeRedPacket() },
-            onSend = { amount, wish -> chatViewModel.sendRedPacket(amount, wish) },
-        )
     }
 }
