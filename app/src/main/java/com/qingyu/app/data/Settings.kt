@@ -1,6 +1,8 @@
 package com.qingyu.app.data
 
 import android.content.Context
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import com.qingyu.app.core.TimeUtil
 import com.qingyu.app.core.memory.MemoryDecay
 import com.qingyu.app.core.memory.PromptRefiner
@@ -50,8 +52,14 @@ data class AppSettings(
     val speech: ApiConfig = ApiConfig(
         model = "tts-1",
     ),
-    val speechVoice: String = "alloy",
+    val speechVoice: String = DEFAULT_SPEECH_VOICE,
     val speechFormat: String = "mp3",
+    /**
+     * 用户从外部导入的音色喵。
+     *
+     * 选中的那个由 [speechVoice] 指认（存的是 URI 喵），直接作为 `voice` 下发喵。
+     */
+    val customVoices: List<CustomVoice> = emptyList(),
     val ttsEnabled: Boolean = false,
     val ttsRate: Float = 1.0f,
     val ttsPitch: Float = 1.0f,
@@ -139,6 +147,20 @@ fun AppSettings.refineConfig(): UtilityLlmConfig = utilityConfig(promptRefineEna
 fun AppSettings.extractConfig(): UtilityLlmConfig = utilityConfig(autoMemoryExtraction)
 
 /**
+ * 合成时实际该用的语音模型喵。
+ *
+ * 选中的如果是从外部导入的音色，就用它自带的模型——音色是绑在模型上的喵，
+ * 拿全局模型去套别人的音色多半合成不出来喵。其余情况仍走设置里的语音模型喵。
+ */
+fun AppSettings.effectiveSpeechModel(): String =
+    customVoices.firstOrNull { it.uri == speechVoice }?.model?.takeIf { it.isNotBlank() }
+        ?: speech.model
+
+/** 当前选中的音色是不是导入进来的外部音色喵。 */
+fun AppSettings.selectedCustomVoice(): CustomVoice? =
+    customVoices.firstOrNull { it.uri == speechVoice }
+
+/**
  * 设置存取喵。
  *
  * 用 SharedPreferences 而不是 DataStore：设置项少、读写频繁，StateFlow 已经提供了响应式喵；
@@ -147,6 +169,11 @@ fun AppSettings.extractConfig(): UtilityLlmConfig = utilityConfig(autoMemoryExtr
 class SettingsStore(context: Context) {
 
     private val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    private val gson = Gson()
+
+    /** 音色列表要整段序列化进 SharedPreferences，所以需要一个列表类型喵。 */
+    private val voiceListType = object : TypeToken<List<CustomVoice>>() {}.type
 
     private val _state = MutableStateFlow(load())
     val state: StateFlow<AppSettings> = _state.asStateFlow()
@@ -203,6 +230,7 @@ class SettingsStore(context: Context) {
             ),
             speechVoice = prefs.getString(KEY_SPEECH_VOICE, null) ?: defaults.speechVoice,
             speechFormat = prefs.getString(KEY_SPEECH_FORMAT, null) ?: defaults.speechFormat,
+            customVoices = decodeVoices(prefs.getString(KEY_CUSTOM_VOICES, null)),
             ttsEnabled = prefs.getBoolean(KEY_TTS_ENABLED, defaults.ttsEnabled),
             ttsRate = prefs.getFloat(KEY_TTS_RATE, defaults.ttsRate),
             ttsPitch = prefs.getFloat(KEY_TTS_PITCH, defaults.ttsPitch),
@@ -241,6 +269,20 @@ class SettingsStore(context: Context) {
         )
     }
 
+    /**
+     * 读外部音色列表喵。
+     *
+     * 存档是整段 JSON，坏掉或换了形态都可能解析失败；这里一律退化成空列表喵——
+     * 宁可让用户重导一次音色，也不能因为一条脏数据让整个设置页打不开喵。
+     */
+    private fun decodeVoices(raw: String?): List<CustomVoice> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return runCatching { gson.fromJson<List<CustomVoice>>(raw, voiceListType) }
+            .getOrNull()
+            ?.filter { it.uri.isNotBlank() }
+            .orEmpty()
+    }
+
     private fun persist(settings: AppSettings) {
         prefs.edit()
             .putString(KEY_BASE_URL, settings.apiBaseUrl)
@@ -263,6 +305,7 @@ class SettingsStore(context: Context) {
             .putString(KEY_SPEECH_MODEL, settings.speech.model)
             .putString(KEY_SPEECH_VOICE, settings.speechVoice)
             .putString(KEY_SPEECH_FORMAT, settings.speechFormat)
+            .putString(KEY_CUSTOM_VOICES, gson.toJson(settings.customVoices))
             .putBoolean(KEY_TTS_ENABLED, settings.ttsEnabled)
             .putFloat(KEY_TTS_RATE, settings.ttsRate)
             .putFloat(KEY_TTS_PITCH, settings.ttsPitch)
@@ -323,6 +366,7 @@ class SettingsStore(context: Context) {
         const val KEY_SPEECH_MODEL = "speech_model"
         const val KEY_SPEECH_VOICE = "speech_voice"
         const val KEY_SPEECH_FORMAT = "speech_format"
+        const val KEY_CUSTOM_VOICES = "custom_voices"
         const val KEY_SEARCH_PROVIDER = "search_provider"
         const val KEY_SEARCH_KEY_BOCHA = "search_key_bocha"
         const val KEY_SEARCH_KEY_TAVILY = "search_key_tavily"
