@@ -5,12 +5,12 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-// 正式包签名。口令写在仓库根的 keystore.properties 里（本地自用签名，不是分发凭据）；
-// 文件不存在时退化成未签名包，这样别人 clone 下来也能直接构建。
+// 正式包签名喵。口令写在仓库根的 keystore.properties 里（本地自用签名，不是分发凭据）喵；
+// 文件不存在时退化成未签名包，这样别人 clone 下来也能直接构建喵。
 val keystoreProps = Properties()
-run {
-    val file = rootProject.file("keystore.properties")
-    if (file.exists()) file.inputStream().use { keystoreProps.load(it) }
+val keystoreFile = rootProject.file("keystore.properties")
+if (keystoreFile.exists()) {
+    keystoreFile.inputStream().use { keystoreProps.load(it) }
 }
 
 android {
@@ -21,8 +21,8 @@ android {
         applicationId = "com.qingyu.app"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
     }
 
     androidResources {
@@ -69,7 +69,7 @@ android {
 
 dependencies {
 
-    // 解决 'ui-test-* is not used' 警告
+    // 解决 'ui-test-* is not used' 这个警告喵
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     implementation(libs.androidx.core.ktx)
@@ -86,15 +86,16 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.gson)
-    // 1. Compose 核心图标库（提供 Menu, Search, MoreVert 等基础图标）
+
+    // Compose 核心图标库，提供 Menu、Search、MoreVert 等基础图标喵
     implementation("androidx.compose.material:material-icons-core")
 
-    // 2. Compose 扩展图标库（提供 AddPhotoAlternate, FavoriteBorder, VolumeOff 等高级/AutoMirrored图标）
+    // Compose 扩展图标库，提供 AddPhotoAlternate、FavoriteBorder、VolumeOff 等高级与 AutoMirrored 图标喵
     implementation("androidx.compose.material:material-icons-extended")
 
     testImplementation(libs.junit)
-    // Android 单元测试里的 org.json 是空壳（调用会抛 "not mocked"），
-    // 而协议解析正是靠它做的，所以测试类路径上需要一份真实实现。
+    // Android 单元测试里的 org.json 是空壳，调用会抛 "not mocked" 喵，
+    // 而协议解析正是靠它做的，所以测试类路径上需要一份真实实现喵。
     testImplementation(libs.json)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
