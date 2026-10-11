@@ -216,26 +216,15 @@ class ConversationStore(private val helper: DbHelper) {
             existing
         } else {
             val now = TimeUtil.now()
+            // 一个角色只有一段对话，所以标题直接用角色名——
+            // 收藏、导出、搜索里显示的都会是这个标题，用"新的对话"没有信息量喵。
+            val title = db.rawQuery(
+                "SELECT name FROM personas WHERE id = ?",
+                arrayOf(personaId.toString()),
+            ).use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0).orEmpty() else ""
+            }.ifBlank { "对话" }
             val values = ContentValues().apply {
-                put("persona_id", personaId)
-                put("title", "新的对话")
-                put("created_at", now)
-                put("updated_at", now)
-                put("last_preview", "")
-                put("message_count", 0)
-                put("pinned", 0)
-            }
-            val id = db.insert("conversations", null, values)
-            Conversation(id = id, personaId = personaId, title = "新的对话", createdAt = now, updatedAt = now)
-        }
-    }
-
-    suspend fun create(personaId: Long, title: String = "新的对话"): Long = write { db ->
-        val now = TimeUtil.now()
-        db.insert(
-            "conversations",
-            null,
-            ContentValues().apply {
                 put("persona_id", personaId)
                 put("title", title)
                 put("created_at", now)
@@ -243,8 +232,23 @@ class ConversationStore(private val helper: DbHelper) {
                 put("last_preview", "")
                 put("message_count", 0)
                 put("pinned", 0)
-            },
-        )
+            }
+            val id = db.insert("conversations", null, values)
+            Conversation(id = id, personaId = personaId, title = title, createdAt = now, updatedAt = now)
+        }
+    }
+
+    /**
+     * 只读地取该角色唯一的那段对话，没有就返回 null喵。
+     *
+     * 与 [latestOrCreate] 的区别是**不建库**：角色列表只需要展示预览，
+     * 为每个角色凭空建一个空对话既浪费又会让"有没有聊过"这个判断失真喵。
+     */
+    suspend fun of(personaId: Long): Conversation? = read { db ->
+        db.rawQuery(
+            "SELECT * FROM conversations WHERE persona_id = ? ORDER BY updated_at DESC LIMIT 1",
+            arrayOf(personaId.toString()),
+        ).useRows { it.toConversation() }.firstOrNull()
     }
 
     suspend fun get(id: Long): Conversation? = read { db ->
@@ -252,7 +256,13 @@ class ConversationStore(private val helper: DbHelper) {
             .useRows { it.toConversation() }.firstOrNull()
     }
 
-    /** 会话列表，置顶优先，其次按最近活动排序喵。 */
+    /**
+     * 全部对话喵。
+     *
+     * 一个角色只有一段对话之后，"一个角色的对话"与"这个角色的对话"已经没有区别喵；
+     * [ConversationStore.of] 用于单个角色，这里是给首页一次性取全量用的喵。
+     * 保留 `pinned` 排序只是为了让老库里手动置顶过的那个仍排在前面喵。
+     */
     suspend fun list(): List<Conversation> = read { db ->
         db.rawQuery("SELECT * FROM conversations ORDER BY pinned DESC, updated_at DESC", null)
             .useRows { it.toConversation() }
@@ -263,26 +273,6 @@ class ConversationStore(private val helper: DbHelper) {
             "SELECT * FROM conversations WHERE persona_id = ? ORDER BY pinned DESC, updated_at DESC",
             arrayOf(personaId.toString()),
         ).useRows { it.toConversation() }
-    }
-
-    suspend fun rename(id: Long, title: String) = write { db ->
-        db.update(
-            "conversations",
-            ContentValues().apply { put("title", title); put("updated_at", TimeUtil.now()) },
-            "id = ?",
-            arrayOf(id.toString()),
-        )
-        Unit
-    }
-
-    suspend fun setPinned(id: Long, pinned: Boolean) = write { db ->
-        db.update(
-            "conversations",
-            ContentValues().apply { put("pinned", if (pinned) 1 else 0) },
-            "id = ?",
-            arrayOf(id.toString()),
-        )
-        Unit
     }
 
     /** 有活动时刷新摘要、计数与排序时间喵。 */
@@ -331,16 +321,6 @@ class ConversationStore(private val helper: DbHelper) {
     suspend fun delete(id: Long) = write { db ->
         db.delete("messages", "conversation_id = ?", arrayOf(id.toString()))
         db.delete("conversations", "id = ?", arrayOf(id.toString()))
-        Unit
-    }
-
-    suspend fun deleteAllForPersona(personaId: Long) = write { db ->
-        db.delete(
-            "messages",
-            "conversation_id IN (SELECT id FROM conversations WHERE persona_id = ?)",
-            arrayOf(personaId.toString()),
-        )
-        db.delete("conversations", "persona_id = ?", arrayOf(personaId.toString()))
         Unit
     }
 }
