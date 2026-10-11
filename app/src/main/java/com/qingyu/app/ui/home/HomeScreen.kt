@@ -72,6 +72,13 @@ fun HomeScreen(
     onHideChat: (Persona) -> Unit,
     onAddContact: () -> Unit,
     onImportChat: () -> Unit,
+    /**
+     * 首屏数据是否还在加载喵。
+     *
+     * 必需：列表初始为空，若不加区分就会先闪一下「还没有对话」再变成真实列表，
+     * 看起来像"打开时白了一下又显示"喵。加载中时留白（底色由外壳铺好）比闪错内容好喵。
+     */
+    loading: Boolean = false,
     snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
     modifier: Modifier = Modifier,
 ) {
@@ -117,7 +124,15 @@ fun HomeScreen(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { innerPadding ->
-        if (entries.isEmpty()) {
+        if (entries.isEmpty() && loading) {
+            // 加载中就先留白：底色已由外壳铺成主题色，不会闪白，
+            // 也不会闪一下"还没有对话"这种错误内容喵。
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding),
+            )
+        } else if (entries.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
