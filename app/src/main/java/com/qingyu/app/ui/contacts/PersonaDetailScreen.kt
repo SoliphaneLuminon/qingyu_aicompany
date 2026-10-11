@@ -101,7 +101,7 @@ fun PersonaDetailScreen(
                     .padding(horizontal = 20.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                PersonaAvatar(emoji = persona.avatarEmoji, size = 64.dp, emphasize = true)
+                PersonaAvatar(persona = persona, size = 64.dp, emphasize = true)
                 Spacer(Modifier.width(16.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
