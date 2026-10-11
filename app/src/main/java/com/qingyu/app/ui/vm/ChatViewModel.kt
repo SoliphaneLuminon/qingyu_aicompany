@@ -15,9 +15,8 @@ import com.qingyu.app.data.Persona
 import com.qingyu.app.data.RedPacket
 import com.qingyu.app.data.Sticker
 import com.qingyu.app.data.repo.ChatEvent
+import com.qingyu.app.data.repo.ReplyRequest
 import com.qingyu.app.data.repo.ChatStreamState
-import com.qingyu.app.data.repo.ReplyGate
-import com.qingyu.app.data.repo.SendBatchTracker
 import com.qingyu.app.media.StickerImporter
 import com.qingyu.app.core.TimeUtil
 import kotlinx.coroutines.Dispatchers
@@ -28,7 +27,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
@@ -41,36 +39,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val engine = container.chatEngine
     private val db = container.database
 
+    /**
+     * 发送与生成流水线的主人喵。
+     *
+     * **它活在应用级作用域里，不在本 ViewModel 里**喵。这一条是用户要求的核心：
+     * 「无论退出聊天框还是退出应用，都一定要收到回复」——
+     * 只要流水线还挂在 `viewModelScope` 上，`closeChat()` 一句 cancel 就把它掐了喵。
+     */
+    private val coordinator = container.replyCoordinator
+
     private val _state = MutableStateFlow(ChatUiState())
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
+    /** 订阅流水线事件的协程；它只负责把事件画到界面上喵。 */
     private var streamJob: Job? = null
-
-    // ---- 发送合并 ----
-    /**
-     * 连发合并的规则状态喵。
-     *
-     * 它只记"欠了几轮生成"，**不记消息内容**——因为消息在用户按下发送的那一刻
-     * 就已经落库了，引擎读历史时自然会把同一批的都带上，不需要我们再攒一遍喵。
-     */
-    private val batchTracker = SendBatchTracker()
-
-    /** 当前这个合并窗口的计时协程喵。 */
-    private var windowJob: Job? = null
-
-    /** 输入框此刻是否开着（由界面回报）喵。 */
-    private var inputFocused: Boolean = false
-
-    /** 这一批消息发出之后，输入框被点开的时刻；没点开过就是 null喵。 */
-    private var inputOpenedAt: Long? = null
-
-    /**
-     * 发送流水线的串行锁喵。
-     *
-     * 它保证**同一时刻只有一条流水线在跑**，且后到的那条会在前一条退出后再看一眼
-     * 有没有新批次。没有它就会出现"窗口恰好在收尾时关闭 → 那一批没人处理"的丢消息竞态喵。
-     */
-    private val pipelineLock = Mutex()
 
     // ---- 打字机 ----
     /** 待逐字播放的已落库回复段喵。 */
@@ -87,6 +69,31 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             bootstrap()
             // 新消息默认是否联网，跟随设置喵
             _state.update { it.copy(searchEnabled = container.settings.current.searchDefaultOn) }
+        }
+        // 把流水线的事件画到界面上喵。
+        //
+        // 界面没开时这些事件没人听也无所谓（coordinator 的发流是 DROP_OLDEST，
+        // 不会因为没人接而卡住生成）；等用户回到对话，openPersona 会从库里读全量喵。
+        streamJob = viewModelScope.launch {
+            coordinator.events.collect { reply ->
+                // **只画属于当前这段对话的事件**喵。
+                // 回复已经不再随界面生灭，用户完全可能在等甲回复时切到乙；
+                // 不看对话 id 的话，甲的回复会凭空出现在乙的聊天里喵。
+                if (reply.conversationId == _state.value.conversation?.id) {
+                    handleEvent(reply.event)
+                }
+            }
+        }
+        // "正在输入"由流水线持有，界面跟着它走喵：这样即使界面是中途重建的，
+        // 也能立刻显示正确的状态；同时只在**当前这段**对话正在生成时才显示喵。
+        viewModelScope.launch {
+            coordinator.generatingFor.collect {
+                _state.update { state ->
+                    state.copy(
+                        topBarTyping = coordinator.generatingFor.value == state.conversation?.id,
+                    )
+                }
+            }
         }
     }
 
@@ -196,9 +203,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * 对话不存在时才由 [ChatEngine.openConversation] 建一个（并在有开场白时写入）喵。
      */
     fun openPersona(persona: Persona) {
-        streamJob?.cancel()
+        // 只停上一段对话的逐字动画喵。
+        //
+        // **不 cancel streamJob**：它现在是本 ViewModel 常驻的事件订阅，
+        // 停掉就再也不画新消息了喵。
+        // **也不动 coordinator**：别的对话可能正在后台生成，那跟这次切换无关；
+        // 而且用户要求"退出聊天框也要收到回复"，切个对话更不该把它掐断喵。
         typingJob?.cancel()
-        batchTracker.reset()
+        typingJob = null
+        typingQueue.clear()
         viewModelScope.launch {
             _state.update { it.copy(loading = true) }
             container.settings.update { it.copy(lastPersonaId = persona.id) }
@@ -290,11 +303,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 从对话返回列表：清掉当前对话，让顶栏与输入栏都回到"未选中"状态喵。 */
+    /**
+     * 从对话返回列表：清掉当前对话，让顶栏与输入栏都回到"未选中"状态喵。
+     *
+     * **刻意不打断正在生成的回复**喵。用户的要求是「退出聊天框也一定要收到回复」，
+     * 而回复由应用级的 [coordinator] 负责，这里清掉的只是界面状态；
+     * 等他再点回来时回复早已一条条落库了，`openPersona` 会照常读出来喵。
+     *
+     * 也**刻意不 resetPending()** 喵：用户可能刚发完消息就退出聊天框，
+     * 那时合并窗口还开着、生成还没开始——清掉待办等于把这条消息吞了喵。
+     *
+     * 打字机可以停：它纯属界面上的逐字动画，没有它回复也已经在库里了喵。
+     */
     fun closeChat() {
-        streamJob?.cancel()
         typingJob?.cancel()
-        batchTracker.reset()
+        typingJob = null
+        typingQueue.clear()
+        deferredReload = false
         _state.update {
             it.copy(
                 persona = null,
@@ -405,37 +430,28 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * 一条消息已经落库上屏，交给合并窗口喵。
+     * 一条消息已经落库上屏，转交给流水线喵。
      *
      * 窗口逻辑与"这条消息是什么"无关，所以表情包、红包、语音转文字
      * 全都走这里，行为一致喵。
+     *
+     * **这里只转交、不等待**喵：真正的合并窗口与生成由 [coordinator] 在应用级作用域里跑，
+     * 所以界面关掉也不影响它把回复写完喵。
      */
     private fun onMessageQueued() {
-        val sentAt = TimeUtil.now()
-        val opened = batchTracker.onSent(sentAt)
-        // 已有窗口开着：这条并进当前批次，等原来那个计时器到点即可喵。
-        if (!opened) return
-
-        // 这一批的"输入框点开时刻"从零开始算，免得上一批的残留把这一批也推迟喵。
-        inputOpenedAt = null
-
-        windowJob?.cancel()
-        windowJob = viewModelScope.launch {
-            // 发完先等基础窗口（合并连发的消息）；若用户在这期间又点开了输入框，
-            // 就再等他到"点开之后 5 秒"——他正打着字时抢答会把他要说的话打断喵。
-            //
-            // 分段醒来而不是一口气睡到截止时刻：输入框中途被关掉时
-            // ReplyGate 会立刻放行，那就不该继续睡喵。
-            while (true) {
-                val now = TimeUtil.now()
-                if (ReplyGate.isReady(now, sentAt, inputOpenedAt, inputFocused)) break
-                val wait = ReplyGate.nextCheckDelayMs(now, sentAt, inputOpenedAt, inputFocused)
-                if (wait <= 0L) break
-                delay(wait)
-            }
-            batchTracker.onWindowClosed()
-            drainBatches()
-        }
+        val current = _state.value
+        val persona = current.persona ?: return
+        val conversation = current.conversation ?: return
+        coordinator.enqueue(
+            ReplyRequest(
+                conversationId = conversation.id,
+                personaId = persona.id,
+                personaName = persona.name,
+                // 联网开关按**这一轮开始时**的设置取：一批消息可能横跨用户切换开关，
+                // 但一轮检索只能有一个答案，取最新的即可喵。
+                searchRequested = _state.value.searchEnabled,
+            ),
+        )
     }
 
     /**
@@ -444,65 +460,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * 只记"这一批发出之后"的重新点开时刻喵：发送前就一直开着的输入框不该推迟回复，
      * 那会让每条消息都白等 5 秒喵。
      */
-    fun onInputFocusChanged(focused: Boolean) {
-        val wasFocused = inputFocused
-        inputFocused = focused
-        if (focused && !wasFocused && batchTracker.hasOpenWindow) {
-            inputOpenedAt = TimeUtil.now()
-        }
-    }
-
-    /**
-     * 把已封口的批次依次跑掉喵。
-     *
-     * **每次都起一条流水线**，靠 [pipelineLock] 串行化，而不是"看有没有活着的流水线"喵。
-     * 后者有个会丢消息的竞态：窗口恰好在流水线收尾那一刻关闭时，
-     * 新调用会看到 streamJob 仍是 active 而直接返回，那一批就永远没人处理了喵。
-     *
-     * 改成加锁后，后到的流水线会排队等前一条退出，进去再自己看一眼：
-     * 有批次就接着跑，没有就立刻结束——多起一个协程的代价可以忽略喵。
-     */
-    private fun drainBatches() {
-        streamJob = viewModelScope.launch {
-            pipelineLock.withLock {
-                while (true) {
-                    if (batchTracker.tryTakeReady()) {
-                        runOneBatch()
-                        continue
-                    }
-                    // 没有待办的批次：还有窗口开着就等它关，否则收工喵。
-                    val window = windowJob
-                    if (!batchTracker.hasOpenWindow || window == null) break
-                    // 等这个窗口的计时器到点；它到点会把批次封口，循环再取一次喵。
-                    window.join()
-                }
-                // 全部批次跑完，收掉"正在输入"的提示喵。
-                _state.update { it.copy(topBarTyping = false) }
-            }
-        }
-    }
-
-    /**
-     * 真正跑一轮生成喵。消息已经在库里了，所以这里不插任何东西喵。
-     *
-     * 本函数不自己起协程、也不 cancel [streamJob]：它就是流水线里的一步，
-     * 由 [drainBatches] 的循环串起来，跑完自然返回、接着跑下一批喵。
-     */
-    private suspend fun runOneBatch() {
-        val current = _state.value
-        val persona = current.persona ?: return
-        val conversation = current.conversation ?: return
-
-        _state.update { it.copy(stream = ChatStreamState(), topBarTyping = true) }
-
-        engine.generate(
-            conversationId = conversation.id,
-            personaId = persona.id,
-            // 联网开关按**这一轮开始时**的设置取：一批消息可能横跨用户切换开关，
-            // 但一轮检索只能有一个答案，取最新的即可喵。
-            searchRequested = _state.value.searchEnabled,
-        ).collect { handleEvent(it) }
-    }
+    fun onInputFocusChanged(focused: Boolean) = coordinator.onInputFocusChanged(focused)
 
     // ------------------------------------------------------------ 语音
 
@@ -787,12 +745,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (current.messages.lastOrNull()?.role != MessageRole.USER) return
 
         _state.update { it.copy(lastFailedInput = null) }
-        // 重试是"立刻再跑一轮"，不走合并窗口——所以先欠一批，
-        // 再让流水线把它连同后面可能排着的批次一起跑掉喵。
-        batchTracker.reset()
-        batchTracker.onSent(TimeUtil.now())
-        batchTracker.onWindowClosed()
-        drainBatches()
+        // 立刻再跑一轮，不走合并窗口——重试要的就是"点了就动"的手感喵。
+        // 交给应用级流水线，这样即使用户马上退出对话或退出应用也会跑完喵。
+        coordinator.submitNow(
+            ReplyRequest(
+                conversationId = current.conversation.id,
+                personaId = current.persona.id,
+                personaName = current.persona.name,
+                searchRequested = current.searchEnabled,
+            ),
+        )
     }
 
     fun regenerate(messageId: Long) {
@@ -805,7 +767,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         typingJob?.cancel()
         typingJob = null
         typingQueue.clear()
-        batchTracker.reset()
 
         val target = current.messages.find { it.id == messageId }
         _state.update { state ->
@@ -821,18 +782,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
-        streamJob?.cancel()
-        streamJob = viewModelScope.launch {
-            delay(500)
-            _state.update { it.copy(topBarTyping = true) }
-
-            engine.regenerate(
+        // 交给应用级流水线跑，这样即使用户马上退出对话或退出应用，
+        // 这一轮重新生成也会跑完并落库喵。
+        coordinator.submitNow(
+            ReplyRequest(
                 conversationId = conversation.id,
                 personaId = persona.id,
-                fromMessageId = messageId,
+                personaName = persona.name,
                 searchRequested = current.searchEnabled,
-            ).collect { handleEvent(it) }
-        }
+                regenerateFrom = messageId,
+            ),
+        )
     }
 
     /** 删掉某条消息；如果删的是用户消息，顺带把它之后的回复也清掉喵。 */
@@ -849,9 +809,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopGenerating() {
-        streamJob?.cancel()
-        streamJob = null
-        batchTracker.reset()
+        // 停生成等于打断流水线本身，所以由它来收尾（含停掉前台服务）喵；
+        // 这里只负责抹掉界面上的流式残影并回读一次库喵。
+        coordinator.cancel()
         viewModelScope.launch {
             _state.update { it.copy(stream = ChatStreamState()) }
             reload()
