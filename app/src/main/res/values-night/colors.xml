@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      暗色主题下的窗口背景：与 Color.kt 的 QySurfaceDark 一致。
+
+      没有这个文件时，暗色主题的机器在 Compose 画出第一帧之前会显示
+      values/colors.xml 里那个近白的底色，看起来就是"打开时白屏闪一下"。
+    -->
+    <color name="qy_window_bg">#FF191919</color>
+</resources>
