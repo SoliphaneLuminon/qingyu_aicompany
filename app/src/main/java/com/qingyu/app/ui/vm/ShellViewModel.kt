@@ -19,6 +19,12 @@ sealed interface AppScreen {
     data class Search(val conversationId: Long) : AppScreen
     data object Modules : AppScreen
     data object Debug : AppScreen
+
+    /** 聊天信息页：从对话右上角的「⋯」进入喵。 */
+    data object ChatInfo : AppScreen
+
+    /** 角色资料页：从通讯录或聊天信息页的头像进入喵。 */
+    data class PersonaDetail(val personaId: Long) : AppScreen
 }
 
 /**
