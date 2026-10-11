@@ -25,9 +25,19 @@ data class ChatUiState(
     /** 顶栏是否显示「对方正在输入中…」——流式进行中或段间延迟队列非空时点亮喵。 */
     val topBarTyping: Boolean = false,
     val input: String = "",
-    /** 首页角色列表：一个角色一行，带它的对话预览与时间喵。 */
+    /** 主界面的对话列表：只含有对话、且没被移除的那些。 */
     val chatList: List<ChatListEntry> = emptyList(),
+    /** 主界面用：这些是 chatList 里的角色。 */
     val personas: List<Persona> = emptyList(),
+    /** 通讯录用：**全部**角色，含对话已被移除的。 */
+    val allPersonas: List<Persona> = emptyList(),
+    /**
+     * 角色 → 它的那段对话，**含被移除的**喵。
+     *
+     * 通讯录与角色资料页要用它显示"聊过多少条、最近什么时候"，
+     * 所以不能只依赖 [chatList]（那里面已经滤掉了被移除的）喵。
+     */
+    val conversationByPersona: Map<Long, Conversation> = emptyMap(),
     val banner: String? = null,
     val lastFailedInput: String? = null,
     /** 还没配置接口地址 / Key，用于首启引导喵。 */
