@@ -1,7 +1,9 @@
 package com.qingyu.app.data.repo
 
+import com.qingyu.app.remote.PromptBuilder
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -160,11 +162,82 @@ class BurstAccumulatorTest {
     }
 
     @Test
-    fun `通篇没有标点时只能原样交出一条`() {
-        // 钉住这个已知边界：模型不写逗号，切分器就没有任何信号可用，只能整段交出去喵。
-        // 典型的坏形态——一句话里连着四五个分句，一个逗号都没有喵。
-        // 因此 PromptBuilder.BURST_INSTRUCTION 必须显式要求写逗号，不能只靠模型自觉喵。
+    fun `中等长度且没有标点时保持一条`() {
+        // 兜底切分只在**明显过长**时出手，正常长度的句子不该被动到喵。
         val segments = run("你哪次吃饭能少得了辣我都记得清清楚楚的")
         assertEquals(listOf("你哪次吃饭能少得了辣我都记得清清楚楚的"), segments)
+    }
+
+    @Test
+    fun `不会在「了」这种模棱两可的字后面断开`() {
+        // "少得了辣" 里的"了"在词中，在它后面断会得到 "…能少得了" / "辣我都记得…"，
+        // 把"辣"甩到下一句，意思就拆歪了喵。
+        val segments = run("你哪次吃饭能少得了辣我都记得清清楚楚的反正你自己心里有数")
+        assertTrue(
+            "不该在「了」后面断开：$segments",
+            segments.none { it.endsWith("了") },
+        )
+    }
+
+    @Test
+    fun `通篇没有标点的长句会被兜底断开`() {
+        // 用户反馈的原话：「还是经常回复那种既没拆开也没逗号的句子」喵。
+        // 模型一个逗号都不写时，标点扫描颗粒无收——这一道兜底就是为它准备的喵。
+        val segments = run("今天上班真的好累啊明天还要早起开会真是受不了这样下去我要疯了")
+        assertTrue(
+            "没有标点的长句必须被断开，不能整段糊成一条：$segments",
+            segments.size > 1,
+        )
+        segments.forEach { piece ->
+            assertTrue(
+                "每一段都不该过长：'$piece'（${piece.length} 字）",
+                piece.length <= PromptBuilder.MAX_RUN_LENGTH + PromptBuilder.MIN_TAIL_LENGTH,
+            )
+        }
+    }
+
+    @Test
+    fun `兜底断开优先落在语气助词后面`() {
+        // 中文里语气助词天然就是停顿处，在那里断开最像真人换气喵。
+        val segments = run("今天上班真的好累啊明天还要早起开会真是受不了这样下去我要疯了")
+        assertTrue(
+            "第一段应当收在语气助词后面：$segments",
+            segments.first().endsWith("啊"),
+        )
+    }
+
+    @Test
+    fun `兜底不会留下孤零零的一两个字`() {
+        // 早先的实现在 "…清清楚楚的" 上会切出一个单独一个"的"，比不断还难看喵。
+        val segments = run("你哪次吃饭能少得了辣我都记得清清楚楚的反正你自己心里有数就行了")
+        assertTrue(
+            "不该出现单字碎片：$segments",
+            segments.none { it.length < PromptBuilder.MIN_TAIL_LENGTH },
+        )
+    }
+
+    @Test
+    fun `省略号波浪号顿号也能断开`() {
+        // 聊天里很常见的停顿符，早期集合里一个都没有，于是整段话挤成一条喵。
+        // 省略号是**强**停顿：前面只有"我想想"三个字也该收尾喵。
+        assertEquals(
+            listOf("我想想", "算了还是去吧"),
+            run("我想想…算了还是去吧"),
+        )
+        // 顿号是**弱**停顿：太密，一遇就断会把话切碎，所以攒够字数才断喵。
+        assertTrue(
+            "顿号也该能断开：${run("买苹果、香蕉、还有橙子")}",
+            run("买苹果、香蕉、还有橙子").size > 1,
+        )
+        assertTrue(
+            "波浪号也该能断开：${run("今天真的好开心呀～明天还要继续加油呢～")}",
+            run("今天真的好开心呀～明天还要继续加油呢～").size > 1,
+        )
+    }
+
+    @Test
+    fun `孤零零的结尾标点不会被吃掉`() {
+        // 短句后面的语气符要留着（"好呀~"），只有真的在断点处的标点才丢弃喵。
+        assertEquals(listOf("好呀~"), run("好呀~"))
     }
 }
