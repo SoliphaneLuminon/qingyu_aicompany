@@ -38,8 +38,13 @@ object Db {
      * - 界面改成"角色即会话"：进角色就是进它唯一的那段对话，不再有新建对话喵；
      * - 升级时每个角色只保留最近活动过的那个对话，其余连同消息、附件、
      *   轮次状态一起删除（取舍见 [collapseConversationsPerPersona] 的说明喵）。
+     *
+     * v7：对话可以"从主界面移除"喵。
+     * - 主界面只显示没被移除的对话，但**角色、消息、记忆一个都不删**喵；
+     * - 从通讯录进去或发出新消息就会回来，所以它是一个"隐藏"标记而不是删除喵
+     *   （`conversations.hidden`）。
      */
-    const val VERSION = 6
+    const val VERSION = 7
 }
 
 class DbHelper(context: Context) : SQLiteOpenHelper(context.applicationContext, Db.NAME, null, Db.VERSION) {
@@ -79,6 +84,10 @@ class DbHelper(context: Context) : SQLiteOpenHelper(context.applicationContext, 
         }
         if (oldVersion < 6) {
             collapseConversationsPerPersona(db)
+        }
+        if (oldVersion < 7) {
+            // v6 -> v7：只加一列，不动既有数据；老对话默认都是"显示中"（0）喵。
+            db.execSQL("ALTER TABLE conversations ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0")
         }
     }
 
@@ -150,7 +159,8 @@ class DbHelper(context: Context) : SQLiteOpenHelper(context.applicationContext, 
                 updated_at INTEGER NOT NULL,
                 last_preview TEXT NOT NULL DEFAULT '',
                 message_count INTEGER NOT NULL DEFAULT 0,
-                pinned INTEGER NOT NULL DEFAULT 0
+                pinned INTEGER NOT NULL DEFAULT 0,
+                hidden INTEGER NOT NULL DEFAULT 0
             )
             """.trimIndent(),
         )
