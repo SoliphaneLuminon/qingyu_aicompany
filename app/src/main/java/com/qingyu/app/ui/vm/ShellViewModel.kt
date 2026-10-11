@@ -25,6 +25,12 @@ sealed interface AppScreen {
 
     /** 角色资料页：从通讯录或聊天信息页的头像进入喵。 */
     data class PersonaDetail(val personaId: Long) : AppScreen
+
+    /** 表情管理页：从表情面板的「管理」进入喵。 */
+    data object StickerManager : AppScreen
+
+    /** 实时语音通话页喵。 */
+    data object Call : AppScreen
 }
 
 /**
