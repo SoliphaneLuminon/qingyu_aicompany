@@ -526,8 +526,66 @@ fun SettingsScreen(
             CollapsibleSettingsSection(title = "语音", initialExpanded = false, trailing = {
                 Icon(Icons.Outlined.RecordVoiceOver, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }) {
+                // ---------------------------------------------------------------- 接口与识别
+                // 这一段**不受「音色来源」影响**，永远显示喵。
+                //
+                // 原因是识别与合成是两件独立的事：识别服务于「按住说话」与语音通话，
+                // 合成服务于朗读喵。用户完全可能选系统语音朗读、却要用 AI 接口做识别；
+                // 把地址与 Key 关在"AI 语音"分支里，他就没法配识别了喵。
                 SettingsCard {
-                RowLabelWithHelp(label = "音色来源", content = HelpTexts.ttsProvider)
+                    RowLabelWithHelp(label = "语音接口", content = HelpTexts.speechBaseUrl)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = settings.speech.baseUrl,
+                        onValueChange = { value -> viewModel.update { it.copy(speech = it.speech.copy(baseUrl = value)) } },
+                        label = { LabelWithHelp("语音接口地址", HelpTexts.speechBaseUrl) },
+                        placeholder = { Text("https://api.openai.com/v1") },
+                        supportingText = { Text("识别与合成共用这一个地址，也支持硅基流动等 OpenAI 兼容实现") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = settings.speech.apiKey,
+                        onValueChange = { value -> viewModel.update { it.copy(speech = it.speech.copy(apiKey = value)) } },
+                        label = { LabelWithHelp("语音 API Key", HelpTexts.speechApiKey) },
+                        supportingText = { Text("与对话模型可以不是同一家") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = settings.transcribeModel,
+                        onValueChange = { value -> viewModel.update { it.copy(transcribeModel = value) } },
+                        label = { LabelWithHelp("语音识别模型", HelpTexts.transcribeModel) },
+                        placeholder = { Text("whisper-1") },
+                        supportingText = { Text("按住说话与语音通话用它把录音转成文字") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "识别与合成必须用各自的模型名：合成模型（如 tts-1）拿去识别会被服务端拒掉。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    if (state.testingKind == "transcribe") {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text("正在探测识别接口…", style = MaterialTheme.typography.labelSmall)
+                        }
+                    } else {
+                        TextButton(onClick = { viewModel.testTranscription() }) { Text("测试语音识别") }
+                    }
+                    TestResultLine(text = state.transcribeTestResult, ok = state.transcribeTestOk)
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                SettingsCard {
+                RowLabelWithHelp(label = "朗读音色来源", content = HelpTexts.ttsProvider)
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TtsProvider.entries.forEach { provider ->
@@ -552,27 +610,9 @@ fun SettingsScreen(
                 if (settings.ttsProvider == TtsProvider.OPENAI) {
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
-                        value = settings.speech.baseUrl,
-                        onValueChange = { value -> viewModel.update { it.copy(speech = it.speech.copy(baseUrl = value)) } },
-                        label = { LabelWithHelp("语音接口地址", HelpTexts.speechBaseUrl) },
-                        placeholder = { Text("https://api.openai.com/v1") },
-                        supportingText = { Text("也支持硅基流动、MiniMax 等 OpenAI 兼容实现") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(
-                        value = settings.speech.apiKey,
-                        onValueChange = { value -> viewModel.update { it.copy(speech = it.speech.copy(apiKey = value)) } },
-                        label = { LabelWithHelp("语音 API Key", HelpTexts.speechApiKey) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(
                         value = settings.speech.model,
                         onValueChange = { value -> viewModel.update { it.copy(speech = it.speech.copy(model = value)) } },
-                        label = { LabelWithHelp("语音模型", HelpTexts.speechModel) },
+                        label = { LabelWithHelp("语音合成模型", HelpTexts.speechModel) },
                         placeholder = { Text("tts-1") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
