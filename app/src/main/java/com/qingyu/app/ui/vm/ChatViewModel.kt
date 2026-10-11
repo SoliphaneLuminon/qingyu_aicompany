@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.qingyu.app.AppContainer
 import com.qingyu.app.data.Attachment
 import com.qingyu.app.data.ChatMessage
+import com.qingyu.app.data.Conversation
 import com.qingyu.app.data.MessageRole
 import com.qingyu.app.data.Persona
 import com.qingyu.app.data.repo.ChatEvent
@@ -119,25 +120,34 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (db.personas.count() == 0) {
             com.qingyu.app.data.SeedPersonas.all().forEach { db.personas.insert(it) }
         }
-        // 首页是角色列表，所以启动只加载列表，不自动进入任何一段对话喵。
+        // 首页是对话列表，所以启动只加载列表，不自动进入任何一段对话喵。
         refreshPersonas()
         _state.update { it.copy(loading = false) }
     }
 
     /**
-     * 刷新首页的角色列表喵。
+     * 刷新主界面的对话列表，以及通讯录要用的角色列表喵。
      *
      * 这是修掉"新建角色后看不到"的关键：以前这个列表只在返回时刷新一次，
      * 新建角色后聊天页手里还是旧列表，自然找不到刚建的人喵。
-     * 现在任何会改动角色的事件（新建 / 编辑 / 复制 / 删除 / 进页面）都走这里喵。
+     * 现在任何会改动角色或对话的事件都走这里喵。
+     *
+     * [chatList] 只含**没被移除**的对话（主界面只管对话）；
+     * [allPersonas] 含**全部**角色（通讯录要能看到被移除对话的角色）喵。
      */
     fun refreshPersonas() {
         viewModelScope.launch {
             val entries = container.conversations.chatList()
+            val all = db.personas.list()
+            // 通讯录与角色资料页要看**全部**对话（含被移除的），所以这里一并取来按角色索引喵。
+            // 放在状态里而不是让界面自己查，是为了避免"界面拿到的是过期数据"这类问题喵。
+            val byPersona = db.conversations.list().associateBy { it.personaId }
             _state.update {
                 it.copy(
                     chatList = entries,
+                    allPersonas = all,
                     personas = entries.map { entry -> entry.persona },
+                    conversationByPersona = byPersona,
                 )
             }
         }
@@ -175,7 +185,60 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 从对话返回角色列表：清掉当前对话，让顶栏与输入栏都回到"未选中"状态喵。 */
+    /**
+     * 把当前这段对话从主界面移除喵。
+     *
+     * 这是**隐藏**而不是删除：角色、消息、记忆一概不动，只是不在主界面列出来喵。
+     * 从通讯录点进这个角色、或发出新消息，它就会自己回来喵。
+     */
+    fun hideCurrentChat() {
+        val conversation = _state.value.conversation ?: return
+        viewModelScope.launch {
+            db.conversations.setHidden(conversation.id, true)
+            closeChat()
+            _state.update { it.copy(banner = "已从主界面移除，聊天记录仍保留") }
+        }
+    }
+
+    /**
+     * 把某个角色的对话从主界面移除喵（长按列表项时用）。
+     *
+     * 与 [hideCurrentChat] 是同一件事，区别只是从列表按角色触发、
+     * 不需要先进入那段对话喵。
+     */
+    fun hideChatOf(persona: Persona) {
+        viewModelScope.launch {
+            val conversation = db.conversations.of(persona.id) ?: return@launch
+            db.conversations.setHidden(conversation.id, true)
+            if (_state.value.persona?.id == persona.id) closeChat()
+            refreshPersonas()
+        }
+    }
+
+    /**
+     * 清空当前对话的所有消息喵。
+     *
+     * 与 [hideCurrentChat] 的区别：**这个是真的删**，删完不可恢复，但角色保留喵。
+     * 界面上的文案与二次确认必须把两者区分清楚，不然太容易误操作喵。
+     */
+    fun clearCurrentMessages() {
+        val conversation = _state.value.conversation ?: return
+        viewModelScope.launch {
+            db.messages.deleteAll(conversation.id)
+            db.conversations.refreshSummary(conversation.id)
+            val messages = engine.history(conversation.id)
+            _state.update {
+                it.copy(
+                    messages = messages,
+                    conversation = db.conversations.get(conversation.id) ?: it.conversation,
+                    banner = "聊天记录已清空",
+                )
+            }
+            refreshPersonas()
+        }
+    }
+
+    /** 从对话返回列表：清掉当前对话，让顶栏与输入栏都回到"未选中"状态喵。 */
     fun closeChat() {
         streamJob?.cancel()
         typingJob?.cancel()
@@ -230,6 +293,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
         val attachments = current.pendingAttachments
         val search = current.searchEnabled
+
+        // 发出消息就把这段对话放回主界面：被"删除对话"移除过的会话，
+        // 只要用户又开口说话，它就该重新出现在列表里喵。
+        if (current.conversation.hidden) {
+            val conversationId = current.conversation.id
+            viewModelScope.launch {
+                db.conversations.unhide(conversationId)
+                refreshPersonas()
+            }
+        }
 
         val userMsgTimestamp = System.currentTimeMillis()
         val optimisticUserMsg = ChatMessage(
