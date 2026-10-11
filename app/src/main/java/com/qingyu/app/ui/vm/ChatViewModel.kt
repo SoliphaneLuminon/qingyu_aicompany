@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.qingyu.app.AppContainer
 import com.qingyu.app.data.Attachment
+import com.qingyu.app.data.AttachmentKind
 import com.qingyu.app.data.ChatMessage
 import com.qingyu.app.data.Conversation
 import com.qingyu.app.data.MessageKind
@@ -591,6 +592,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 stickerPanelOpen = false,
                 // 乐观上屏：立刻显示这个表情，不等落库往返喵。
+                //
+                // **必须连附件一起带上**喵。表情气泡是靠 message.attachments 里的图渲染的，
+                // 只给 kind 与名字的话，StickerBubble 找不到附件就会退化成一行文字，
+                // 于是表现为"刚发出去显示的是名字，等对方回复完才变成图"——
+                // 那一瞬间正是 reload() 从库里把附件读回来的时刻喵。
+                // 这里先造一个同形状的附件顶上，落库后的真附件会在 reload 时替换它喵。
                 messages = it.messages + ChatMessage(
                     id = -System.currentTimeMillis(),
                     conversationId = conversation.id,
@@ -599,6 +606,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     timestamp = System.currentTimeMillis(),
                     kind = MessageKind.STICKER,
                     stickerId = sticker.id,
+                    attachments = listOf(
+                        Attachment(
+                            conversationId = conversation.id,
+                            kind = AttachmentKind.IMAGE,
+                            localPath = sticker.filePath,
+                            mimeType = sticker.mimeType,
+                            width = sticker.width,
+                            height = sticker.height,
+                            sizeBytes = sticker.sizeBytes,
+                            createdAt = System.currentTimeMillis(),
+                        ),
+                    ),
                 ),
             )
         }
