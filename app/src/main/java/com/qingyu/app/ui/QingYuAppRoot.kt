@@ -11,6 +11,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
@@ -31,6 +32,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -46,8 +48,12 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qingyu.app.AppContainer
+import com.qingyu.app.data.MessageRole
 import com.qingyu.app.ui.chat.ChatInfoScreen
+import com.qingyu.app.ui.chat.CallScreen
 import com.qingyu.app.ui.chat.ChatScreen
+import com.qingyu.app.ui.chat.RedPacketDialog
+import com.qingyu.app.ui.chat.StickerManagerScreen
 import com.qingyu.app.ui.contacts.ContactsScreen
 import com.qingyu.app.ui.contacts.PersonaDetailScreen
 import com.qingyu.app.ui.debug.DebugScreen
@@ -55,9 +61,13 @@ import com.qingyu.app.ui.favorites.FavoritesScreen
 import com.qingyu.app.ui.home.HomeScreen
 import com.qingyu.app.ui.memory.MemoryScreen
 import com.qingyu.app.ui.modules.ModulesScreen
+import com.qingyu.app.ui.personas.AvatarCropScreen
 import com.qingyu.app.ui.personas.PersonaEditorDialog
 import com.qingyu.app.ui.search.SearchScreen
 import com.qingyu.app.ui.settings.SettingsScreen
+import com.qingyu.app.ui.theme.LocalDarkTheme
+import com.qingyu.app.ui.theme.QyBottomBarDark
+import com.qingyu.app.ui.theme.QyBottomBarLight
 import com.qingyu.app.ui.vm.AppScreen
 import com.qingyu.app.ui.vm.ChatUiState
 import com.qingyu.app.ui.vm.ChatViewModel
@@ -177,6 +187,36 @@ fun QingYuAppRoot(container: AppContainer) {
         if (uri != null) dataViewModel.importChat(uri)
     }
 
+    // 头像：相册选图 → 裁剪页 → 落盘。
+    // 相册与裁剪分两步，是因为裁剪需要一张能自由缩放平移的位图，
+    // 而系统相册只给一个 Uri；中间的 Uri 就暂存在这里喵。
+    var croppingAvatarUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    val avatarPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+    ) { uri -> if (uri != null) croppingAvatarUri = uri }
+
+    // 表情：相册单张 / 压缩包整包。两处入口（输入框面板与表情管理页）共用这两个启动器喵。
+    val stickerImagePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+    ) { uri -> if (uri != null) chatViewModel.importStickerFromUri(uri) }
+    val stickerZipPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri -> if (uri != null) chatViewModel.importStickersFromZip(uri) }
+
+    // 通话页里的麦克风权限：与聊天页共用一个申请入口，避免两处逻辑漂移喵。
+    val audioPermission = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) chatViewModel.startRecording() else chatViewModel.showBanner("没有麦克风权限")
+    }
+
+    // 通话页回显"上一句听成了什么"：识别错了要看得见，
+    // 否则用户只会觉得"它答非所问"，却不知道是识别环节出的问题喵。
+    var callLastUserText by remember { mutableStateOf("") }
+    LaunchedEffect(chatState.messages.size, chatState.recording) {
+        chatState.messages.lastOrNull { it.role == MessageRole.USER }?.let { callLastUserText = it.content }
+    }
+
     // 导入结果通过主界面的 snackbar 反馈喵。
     LaunchedEffect(dataState.message) {
         dataState.message?.let {
@@ -270,6 +310,8 @@ fun QingYuAppRoot(container: AppContainer) {
             onChange = personaEditor::onDraftChange,
             onDismiss = { personaEditor.closeEditor() },
             onSave = { personaEditor.save() },
+            onPickAvatar = { avatarPicker.launch("image/*") },
+            onClearAvatar = { personaEditor.clearAvatar() },
         )
     }
     editorState.pendingDelete?.let { target ->
@@ -376,6 +418,57 @@ fun QingYuAppRoot(container: AppContainer) {
             return
         }
 
+        is AppScreen.StickerManager -> {
+            ScreenEnter {
+                StickerManagerScreen(
+                    stickers = chatState.stickers,
+                    importing = chatState.importingStickers,
+                    onBack = back,
+                    onImportImage = { stickerImagePicker.launch("image/*") },
+                    onImportZip = { stickerZipPicker.launch(arrayOf("application/zip", "application/x-zip-compressed", "*/*")) },
+                    onRename = { sticker, name -> chatViewModel.renameSticker(sticker, name) },
+                    onDelete = { sticker -> chatViewModel.deleteSticker(sticker) },
+                )
+            }
+            return
+        }
+
+        is AppScreen.Call -> {
+            val persona = chatState.persona
+            if (persona == null) {
+                // 对话已经关了（例如通话中途挂断后退回），直接退回列表喵。
+                shellViewModel.back()
+            } else {
+                // 通话期间置上标记：回复要无条件念出来，不能依赖聊天页那两个朗读开关喵。
+                // 离开这一屏（含返回键、挂断）时由 DisposableEffect 清掉，不会残留喵。
+                DisposableEffect(Unit) {
+                    chatViewModel.setCallState(inCall = true, status = "通话中")
+                    onDispose { chatViewModel.setCallState(inCall = false, status = "") }
+                }
+                CallScreen(
+                    persona = persona,
+                    recording = chatState.recording,
+                    thinking = chatState.stream.generating,
+                    speaking = speaking,
+                    lastUserText = callLastUserText,
+                    onHoldStart = {
+                        if (chatViewModel.hasAudioPermission()) {
+                            chatViewModel.startRecording()
+                        } else {
+                            audioPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+                        }
+                    },
+                    onHoldEnd = { chatViewModel.stopRecordingAndSend() },
+                    onHangUp = {
+                        chatViewModel.cancelRecording()
+                        chatViewModel.stopSpeaking()
+                        back()
+                    },
+                )
+            }
+            return
+        }
+
         AppScreen.Home -> Unit
     }
 
@@ -394,7 +487,13 @@ fun QingYuAppRoot(container: AppContainer) {
                 // 但 Scaffold 仍会为它预留约 80dp。聊天页的输入栏上移了「整个键盘高度喵」，
                 // 两边一叠加，输入栏就会停在键盘上方约一个标签栏高的位置——那条空白正是它喵。
                 if (!imeVisible) {
-                    NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                    // 底栏用"介于普通对话与置顶对话之间"的那层底色喵：
+                    // 浅色下 普通白 → 底栏 #F7F7F7 → 置顶 #F2F2F2，
+                    // 暗色下 普通 #191919 → 底栏 #202020 → 置顶 #262626，
+                    // 三层明度依次递进，一眼能分出"列表 / 底栏 / 置顶"喵。
+                    NavigationBar(
+                        containerColor = if (LocalDarkTheme.current) QyBottomBarDark else QyBottomBarLight,
+                    ) {
                         HomeTab.entries.forEach { item ->
                             NavigationBarItem(
                                 selected = tab == item,
@@ -422,7 +521,21 @@ fun QingYuAppRoot(container: AppContainer) {
                 }
             },
         ) { innerPadding ->
-            Box(modifier = Modifier.padding(innerPadding)) {
+            // consumeWindowInsets 是关键的一步喵。
+            //
+            // 外层 Scaffold 已经把状态栏高度与底栏高度算进了 innerPadding，
+            // 而内层各页自己的 TopAppBar 默认又会加一次 `statusBarsPadding`、
+            // 内容区也会再让一次导航栏——两边各重复一遍，界面上下就多出一圈空白喵。
+            //
+            // Material3 的约定是：被父布局 consume 掉的 insets 会从子组件的
+            // `contentWindowInsets` 里自动排除（见 Scaffold.kt 的注释）。
+            // 所以这里声明"这些我已经用掉了"，内层就不再重复让位——
+            // 标题栏自然上移、底栏自然下移，中间内容区随之变大喵。
+            Box(
+                modifier = Modifier
+                    .padding(innerPadding)
+                    .consumeWindowInsets(innerPadding),
+            ) {
                 // 底部标签切换时做一次交叉淡入淡出：不引入滑动是因为页面宽度都占满，
                 // 横向位移反而会让人以为可以左右滑，淡入更符合"换了一屏"的直觉喵。
                 Crossfade(
@@ -440,6 +553,9 @@ fun QingYuAppRoot(container: AppContainer) {
                             },
                             onHideChat = { persona ->
                                 chatViewModel.hideChatOf(persona)
+                            },
+                            onTogglePin = { persona, pinned ->
+                                chatViewModel.setPinned(persona, pinned)
                             },
                             onAddContact = { personaEditor.createNew() },
                             onImportChat = { importLauncher.launch(arrayOf("application/json", "text/plain", "*")) },
@@ -510,6 +626,14 @@ fun QingYuAppRoot(container: AppContainer) {
                     },
                     onOpenChatInfo = { shellViewModel.navigate(AppScreen.ChatInfo) },
                     onOpenSettings = { tab = HomeTab.SETTINGS },
+                    onStartCall = {
+                        chatViewModel.togglePlusPanelOff()
+                        shellViewModel.navigate(AppScreen.Call)
+                    },
+                    onOpenStickerManager = {
+                        chatViewModel.toggleStickerPanelOff()
+                        shellViewModel.navigate(AppScreen.StickerManager)
+                    },
                     // 它已经盖住了整个屏幕（含底部标签栏），没有人替它让位，
                     // 键盘与系统手势条都要由它自己避让喵。
                     reservedBottomInset = 0.dp,
@@ -518,5 +642,29 @@ fun QingYuAppRoot(container: AppContainer) {
                 )
             }
         }
+    }
+
+    // ---------------------------------------------------------------- 头像裁剪
+    // 放在最外层（连角色编辑弹窗之上）：裁剪是"必须给出结果才能继续"的一步，
+    // 底下露出的是相册选的原图，弹窗留在后面不影响，回来还能接着改别的字段喵。
+    croppingAvatarUri?.let { uri ->
+        AvatarCropScreen(
+            source = uri,
+            onCancel = { croppingAvatarUri = null },
+            onConfirm = { bitmap ->
+                personaEditor.applyCroppedAvatar(bitmap)
+                croppingAvatarUri = null
+            },
+        )
+    }
+
+    // ---------------------------------------------------------------- 发红包
+    // 与裁剪页同级放在最外层：它可能在对话里触发（聊天页盖着主界面），
+    // 若放在 Scaffold 里面会被对话覆盖层压住、根本点不到喵。
+    if (chatState.redPacketOpen) {
+        RedPacketDialog(
+            onDismiss = { chatViewModel.closeRedPacket() },
+            onSend = { amount, wish -> chatViewModel.sendRedPacket(amount, wish) },
+        )
     }
 }
