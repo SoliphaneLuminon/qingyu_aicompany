@@ -85,7 +85,7 @@ data class SearchHit(
     val publishedAt: String = "",
 )
 
-/** 一次会话（对应一个角色的一段连续聊天喵）。 */
+/** 一次会话（对应一个角色唯一的那段聊天喵）。 */
 data class Conversation(
     val id: Long = 0L,
     val personaId: Long,
@@ -96,6 +96,24 @@ data class Conversation(
     val messageCount: Int = 0,
     val pinned: Boolean = false,
 )
+
+/**
+ * 角色列表（首页）的一行喵。
+ *
+ * 一个角色就是一段对话，所以这里把角色与它那段对话合成一个视图对象喵。
+ * [conversation] 为 null 表示这个角色**还没聊过**——列表照样显示它，
+ * 但预览位置留白，不为了显示预览而凭空建一个空对话喵。
+ */
+data class ChatListEntry(
+    val persona: Persona,
+    val conversation: Conversation?,
+) {
+    /** 还没聊过：没有预览，时间用角色的创建时间喵。 */
+    val neverChatted: Boolean get() = conversation == null || conversation.messageCount == 0
+
+    /** 排序与右侧时间要用的时间戳喵。 */
+    val sortTime: Long get() = conversation?.updatedAt ?: persona.createdAt
+}
 
 /** 角色卡（AI 人格喵）。 */
 data class Persona(
