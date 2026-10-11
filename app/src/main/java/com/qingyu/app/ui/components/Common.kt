@@ -1,5 +1,6 @@
 package com.qingyu.app.ui.components
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -20,24 +21,45 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.graphics.BitmapFactory
+import com.qingyu.app.AppContainer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
-/** 圆形 emoji 头像，带一圈柔和渐变底喵。 */
+/**
+ * 角色头像喵。
+ *
+ * 有自定义头像（[avatarImage] 非空且文件还在）就画那张图，否则退回 emoji 喵。
+ * 两者共用一个入口，是因为界面上十几个地方都要显示头像；
+ * 让每处自己判断"该画图还是画字"，迟早会漏掉一两处、出现同一角色两个样子喵。
+ *
+ * 图片解码放在 [produceState] 里按文件名缓存：头像会被列表滚动反复重组，
+ * 每次都重新解码 512×512 的 PNG 会明显掉帧喵。
+ */
 @Composable
 fun PersonaAvatar(
     emoji: String,
     size: Dp = 40.dp,
     modifier: Modifier = Modifier,
     emphasize: Boolean = false,
+    /** 自定义头像的文件名；空串表示用 emoji 喵。 */
+    avatarImage: String = "",
 ) {
     val scheme = MaterialTheme.colorScheme
     val background = if (emphasize) {
@@ -45,6 +67,19 @@ fun PersonaAvatar(
     } else {
         Brush.linearGradient(listOf(scheme.surfaceContainerHigh, scheme.surfaceContainer))
     }
+
+    val context = LocalContext.current
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, avatarImage) {
+        value = if (avatarImage.isBlank()) {
+            null
+        } else {
+            withContext(Dispatchers.IO) {
+                val file = AppContainer.get(context).avatarStore.fileOf(avatarImage)
+                file?.let { runCatching { BitmapFactory.decodeFile(it.absolutePath)?.asImageBitmap() }.getOrNull() }
+            }
+        }
+    }
+
     Box(
         modifier = modifier
             .size(size)
@@ -53,13 +88,39 @@ fun PersonaAvatar(
             .border(1.dp, scheme.outlineVariant.copy(alpha = 0.4f), CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = emoji.ifBlank { "🌙" },
-            fontSize = (size.value * 0.46f).sp,
-            textAlign = TextAlign.Center,
-        )
+        val image = bitmap
+        if (image != null) {
+            // 裁成圆形：头像框本身是圆的，图却是方的，不裁就会溢出圆角喵。
+            Image(
+                bitmap = image,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.size(size).clip(CircleShape),
+            )
+        } else {
+            Text(
+                text = emoji.ifBlank { "🌙" },
+                fontSize = (size.value * 0.46f).sp,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
+
+/** 直接按角色画头像的便捷重载喵。 */
+@Composable
+fun PersonaAvatar(
+    persona: com.qingyu.app.data.Persona,
+    size: Dp = 40.dp,
+    modifier: Modifier = Modifier,
+    emphasize: Boolean = false,
+) = PersonaAvatar(
+    emoji = persona.avatarEmoji,
+    size = size,
+    modifier = modifier,
+    emphasize = emphasize,
+    avatarImage = persona.avatarImage,
+)
 
 /** 空状态：一句主标题 + 一句解释 + 可选操作喵。 */
 @Composable
