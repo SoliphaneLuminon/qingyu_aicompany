@@ -1,5 +1,10 @@
 package com.qingyu.app.ui.personas
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,10 +27,16 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.unit.dp
 import com.qingyu.app.data.Persona
+import com.qingyu.app.ui.components.LabelWithHelp
+import com.qingyu.app.ui.settings.HelpTexts
 
 /** 可选头像：只用 emoji，省掉图床和裁剪，也更容易做出个性喵。 */
 private val EMOJI_CHOICES = listOf(
@@ -65,8 +76,15 @@ fun PersonaEditorDialog(
                         modifier = Modifier.weight(1f),
                     )
                     Spacer(Modifier.width(10.dp))
+                    // 头像预览跟着选择变，轻轻弹一下，反馈更即时喵。
+                    val avatarBump = remember { Animatable(1f) }
+                    LaunchedEffect(draft.avatarEmoji) {
+                        avatarBump.snapTo(1.15f)
+                        avatarBump.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 600f))
+                    }
                     Box(
                         modifier = Modifier
+                            .scale(avatarBump.value)
                             .clip(RoundedCornerShape(14.dp))
                             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                             .padding(horizontal = 14.dp, vertical = 14.dp),
@@ -84,16 +102,25 @@ fun PersonaEditorDialog(
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             row.forEach { emoji ->
                                 val selected = draft.avatarEmoji == emoji
+                                val bg by animateColorAsState(
+                                    targetValue = if (selected) {
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceContainer
+                                    },
+                                    animationSpec = tween(160),
+                                    label = "emojiBg",
+                                )
+                                val emojiScale by animateFloatAsState(
+                                    targetValue = if (selected) 1.12f else 1f,
+                                    animationSpec = spring(dampingRatio = 0.6f, stiffness = 800f),
+                                    label = "emojiScale",
+                                )
                                 Box(
                                     modifier = Modifier
+                                        .scale(emojiScale)
                                         .clip(RoundedCornerShape(10.dp))
-                                        .background(
-                                            if (selected) {
-                                                MaterialTheme.colorScheme.primaryContainer
-                                            } else {
-                                                MaterialTheme.colorScheme.surfaceContainer
-                                            },
-                                        )
+                                        .background(bg)
                                         .clickable { onChange { it.copy(avatarEmoji = emoji) } }
                                         .padding(horizontal = 8.dp, vertical = 5.dp),
                                 ) {
@@ -108,7 +135,7 @@ fun PersonaEditorDialog(
                 OutlinedTextField(
                     value = draft.tagline,
                     onValueChange = { value -> onChange { it.copy(tagline = value) } },
-                    label = { Text("一句话简介") },
+                    label = { LabelWithHelp("一句话简介", HelpTexts.personaTagline) },
                     placeholder = { Text("温柔但有点小别扭的邻家女孩") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -118,7 +145,7 @@ fun PersonaEditorDialog(
                 OutlinedTextField(
                     value = draft.systemPrompt,
                     onValueChange = { value -> onChange { it.copy(systemPrompt = value) } },
-                    label = { Text("人格设定") },
+                    label = { LabelWithHelp("人格设定", HelpTexts.personaSystemPrompt) },
                     supportingText = { Text("他是谁、和用户什么关系、说话什么风格、绝对不要做什么") },
                     minLines = 4,
                     modifier = Modifier.fillMaxWidth(),
@@ -128,7 +155,7 @@ fun PersonaEditorDialog(
                 OutlinedTextField(
                     value = draft.scenario,
                     onValueChange = { value -> onChange { it.copy(scenario = value) } },
-                    label = { Text("当前情境（可留空）") },
+                    label = { LabelWithHelp("当前情境（可留空）", HelpTexts.personaScenario) },
                     minLines = 2,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -137,7 +164,7 @@ fun PersonaEditorDialog(
                 OutlinedTextField(
                     value = draft.greeting,
                     onValueChange = { value -> onChange { it.copy(greeting = value) } },
-                    label = { Text("开场白（可留空）") },
+                    label = { LabelWithHelp("开场白（可留空）", HelpTexts.personaGreeting) },
                     supportingText = { Text("第一次打开这个角色时自动发出的第一条消息") },
                     minLines = 2,
                     modifier = Modifier.fillMaxWidth(),
@@ -147,7 +174,7 @@ fun PersonaEditorDialog(
                 OutlinedTextField(
                     value = draft.sampleDialogue,
                     onValueChange = { value -> onChange { it.copy(sampleDialogue = value) } },
-                    label = { Text("说话示例（可留空）") },
+                    label = { LabelWithHelp("说话示例（可留空）", HelpTexts.personaSampleDialogue) },
                     supportingText = { Text("格式：用户：…… / 角色：……") },
                     minLines = 3,
                     modifier = Modifier.fillMaxWidth(),
@@ -158,7 +185,7 @@ fun PersonaEditorDialog(
                     OutlinedTextField(
                         value = draft.modelOverride,
                         onValueChange = { value -> onChange { it.copy(modelOverride = value) } },
-                        label = { Text("模型覆盖") },
+                        label = { LabelWithHelp("模型覆盖", HelpTexts.personaModelOverride) },
                         placeholder = { Text("留空用全局") },
                         singleLine = true,
                         modifier = Modifier.weight(1f),
@@ -172,7 +199,7 @@ fun PersonaEditorDialog(
                         val parsed = value.toDoubleOrNull()
                         onChange { it.copy(temperatureOverride = parsed) }
                     },
-                    label = { Text("温度覆盖（可留空）") },
+                    label = { LabelWithHelp("温度覆盖（可留空）", HelpTexts.personaTemperature) },
                     placeholder = { Text("0.0 ~ 2.0") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
