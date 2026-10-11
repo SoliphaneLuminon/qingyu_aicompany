@@ -120,9 +120,31 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (db.personas.count() == 0) {
             com.qingyu.app.data.SeedPersonas.all().forEach { db.personas.insert(it) }
         }
-        // 首页是对话列表，所以启动只加载列表，不自动进入任何一段对话喵。
-        refreshPersonas()
+        // 先把列表真正读进来，再撤下 loading 喵。
+        // 顺序不能反：若先 `refreshPersonas()`（它内部是 launch）再立刻置 false，
+        // 首帧就会出现"loading 已是 false、列表却还空着"，界面先闪一下
+        // 「还没有对话」再变成真实列表喵。
+        loadLists()
         _state.update { it.copy(loading = false) }
+    }
+
+    /**
+     * 真正去读库并写状态的那一步（挂起，可被 await）喵。
+     */
+    private suspend fun loadLists() {
+        val entries = container.conversations.chatList()
+        val all = db.personas.list()
+        // 通讯录与角色资料页要看**全部**对话（含被移除的），所以这里一并取来按角色索引喵。
+        // 放在状态里而不是让界面自己查，是为了避免"界面拿到的是过期数据"这类问题喵。
+        val byPersona = db.conversations.list().associateBy { it.personaId }
+        _state.update {
+            it.copy(
+                chatList = entries,
+                allPersonas = all,
+                personas = entries.map { entry -> entry.persona },
+                conversationByPersona = byPersona,
+            )
+        }
     }
 
     /**
@@ -136,21 +158,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * [allPersonas] 含**全部**角色（通讯录要能看到被移除对话的角色）喵。
      */
     fun refreshPersonas() {
-        viewModelScope.launch {
-            val entries = container.conversations.chatList()
-            val all = db.personas.list()
-            // 通讯录与角色资料页要看**全部**对话（含被移除的），所以这里一并取来按角色索引喵。
-            // 放在状态里而不是让界面自己查，是为了避免"界面拿到的是过期数据"这类问题喵。
-            val byPersona = db.conversations.list().associateBy { it.personaId }
-            _state.update {
-                it.copy(
-                    chatList = entries,
-                    allPersonas = all,
-                    personas = entries.map { entry -> entry.persona },
-                    conversationByPersona = byPersona,
-                )
-            }
-        }
+        viewModelScope.launch { loadLists() }
     }
 
     /**
