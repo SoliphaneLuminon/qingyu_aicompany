@@ -14,8 +14,10 @@ import com.qingyu.app.data.Favorite
 import com.qingyu.app.data.FavoriteKind
 import com.qingyu.app.data.MemoryCategory
 import com.qingyu.app.data.MemoryItem
+import com.qingyu.app.data.MessageKind
 import com.qingyu.app.data.MessageRole
 import com.qingyu.app.data.Persona
+import com.qingyu.app.data.Sticker
 import com.qingyu.app.data.ChatMessage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -111,6 +113,7 @@ class PersonaStore(private val helper: DbHelper) {
         id = long("id"),
         name = str("name"),
         avatarEmoji = str("avatar_emoji"),
+        avatarImage = str("avatar_image"),
         tagline = str("tagline"),
         systemPrompt = str("system_prompt"),
         scenario = str("scenario"),
@@ -173,6 +176,7 @@ class PersonaStore(private val helper: DbHelper) {
     private fun Persona.toValues() = ContentValues().apply {
         put("name", name)
         put("avatar_emoji", avatarEmoji)
+        put("avatar_image", avatarImage)
         put("tagline", tagline)
         put("system_prompt", systemPrompt)
         put("scenario", scenario)
@@ -290,6 +294,23 @@ class ConversationStore(private val helper: DbHelper) {
         Unit
     }
 
+    /**
+     * 置顶 / 取消置顶喵。
+     *
+     * 只改 `pinned` 一列，**不动 `updated_at`**喵——置顶是个"摆放"动作，
+     * 不是"聊天"动作；若顺手刷新了活动时间，取消置顶后它会假装自己刚聊过、
+     * 窜到列表最前面喵。
+     */
+    suspend fun setPinned(id: Long, pinned: Boolean) = write { db ->
+        db.update(
+            "conversations",
+            ContentValues().apply { put("pinned", if (pinned) 1 else 0) },
+            "id = ?",
+            arrayOf(id.toString()),
+        )
+        Unit
+    }
+
     suspend fun get(id: Long): Conversation? = read { db ->
         db.rawQuery("SELECT * FROM conversations WHERE id = ?", arrayOf(id.toString()))
             .useRows { it.toConversation() }.firstOrNull()
@@ -378,6 +399,9 @@ class MessageStore(private val helper: DbHelper) {
         favorite = bool("favorite"),
         error = getString(getColumnIndexOrThrow("error")),
         searchResults = str("search_json").toSearchHits(),
+        kind = MessageKind.fromWire(str("kind")),
+        stickerId = long("sticker_id"),
+        payload = str("payload"),
     )
 
     private suspend fun <T> read(block: (android.database.sqlite.SQLiteDatabase) -> T): T =
@@ -397,6 +421,9 @@ class MessageStore(private val helper: DbHelper) {
         if (error == null) putNull("error") else put("error", error)
         put("search_json", searchResults.toSearchJson())
         put("has_image", if (attachments.any { it.isImage }) 1 else 0)
+        put("kind", kind.wire)
+        put("sticker_id", stickerId)
+        put("payload", payload)
     }
 
     suspend fun insert(message: ChatMessage): Long = write { db ->
@@ -1280,6 +1307,130 @@ data class MemoryStats(
     val totalRecalls: Long = 0L,
 )
 
+/**
+ * 表情包存储喵。
+ *
+ * 与其他 Store 不同的两点喵：
+ * - **按使用次数排序**：最近常发的排在前面，符合"表情包越用越顺手"的直觉喵；
+ *   但首次导入时大家都还是 0，所以要退化成按导入顺序排，否则顺序会随机跳喵
+ * - 删除时**顺手把文件也删掉**：表情包图片只被这一行引用，不像附件那样可能
+ *   被多条消息共享；留下文件就是永久垃圾喵
+ */
+class StickerStore(private val helper: DbHelper) {
+
+    private fun Cursor.toSticker() = Sticker(
+        id = long("id"),
+        name = str("name"),
+        filePath = str("file_path"),
+        mimeType = str("mime_type"),
+        width = int("width"),
+        height = int("height"),
+        sizeBytes = long("size_bytes"),
+        useCount = int("use_count"),
+        sortOrder = int("sort_order"),
+        createdAt = long("created_at"),
+    )
+
+    private suspend fun <T> read(block: (android.database.sqlite.SQLiteDatabase) -> T): T =
+        withContext(Dispatchers.IO) { block(helper.readableDatabase) }
+
+    private suspend fun <T> write(block: (android.database.sqlite.SQLiteDatabase) -> T): T =
+        withContext(Dispatchers.IO) { helper.inTransaction(block) }
+
+    /** 全部表情包，常用的在前喵。 */
+    suspend fun list(): List<Sticker> = read { db ->
+        db.rawQuery(
+            "SELECT * FROM stickers ORDER BY use_count DESC, sort_order ASC, id ASC",
+            null,
+        ).useRows { it.toSticker() }
+    }
+
+    suspend fun get(id: Long): Sticker? = read { db ->
+        db.rawQuery("SELECT * FROM stickers WHERE id = ?", arrayOf(id.toString()))
+            .useRows { it.toSticker() }.firstOrNull()
+    }
+
+    suspend fun count(): Int = read { db ->
+        db.rawQuery("SELECT COUNT(*) FROM stickers", null).use { c ->
+            if (c.moveToFirst()) c.getInt(0) else 0
+        }
+    }
+
+    /** 同名表情是否已存在（导入时用来避免重复导入同一套）喵。 */
+    suspend fun existingNames(): Set<String> = read { db ->
+        db.rawQuery("SELECT name FROM stickers", null).use { c ->
+            buildSet {
+                while (c.moveToNext()) add(c.getString(0))
+            }
+        }
+    }
+
+    suspend fun insert(sticker: Sticker): Long = write { db ->
+        db.insert(
+            "stickers",
+            null,
+            ContentValues().apply {
+                put("name", sticker.name)
+                put("file_path", sticker.filePath)
+                put("mime_type", sticker.mimeType)
+                put("width", sticker.width)
+                put("height", sticker.height)
+                put("size_bytes", sticker.sizeBytes)
+                put("use_count", sticker.useCount)
+                put("sort_order", sticker.sortOrder)
+                put("created_at", if (sticker.createdAt > 0) sticker.createdAt else TimeUtil.now())
+            },
+        )
+    }
+
+    /** 批量导入，整体一个事务喵。 */
+    suspend fun insertAll(stickers: List<Sticker>): Int = write { db ->
+        var inserted = 0
+        for (sticker in stickers) {
+            val id = db.insert(
+                "stickers",
+                null,
+                ContentValues().apply {
+                    put("name", sticker.name)
+                    put("file_path", sticker.filePath)
+                    put("mime_type", sticker.mimeType)
+                    put("width", sticker.width)
+                    put("height", sticker.height)
+                    put("size_bytes", sticker.sizeBytes)
+                    put("use_count", sticker.useCount)
+                    put("sort_order", sticker.sortOrder)
+                    put("created_at", if (sticker.createdAt > 0) sticker.createdAt else TimeUtil.now())
+                },
+            )
+            if (id > 0) inserted++
+        }
+        inserted
+    }
+
+    suspend fun rename(id: Long, name: String) = write { db ->
+        db.update(
+            "stickers",
+            ContentValues().apply { put("name", name) },
+            "id = ?",
+            arrayOf(id.toString()),
+        )
+        Unit
+    }
+
+    /** 发过一次就记一次，用于把常用的顶到前面喵。 */
+    suspend fun markUsed(id: Long) = write { db ->
+        db.execSQL("UPDATE stickers SET use_count = use_count + 1 WHERE id = ?", arrayOf(id))
+    }
+
+    /** 删除一行，返回它的路径供调用方清理文件喵。 */
+    suspend fun delete(id: Long): String? = write { db ->
+        val path = db.rawQuery("SELECT file_path FROM stickers WHERE id = ?", arrayOf(id.toString()))
+            .use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        db.delete("stickers", "id = ?", arrayOf(id.toString()))
+        path
+    }
+}
+
 /** 数据库门面：把各 Store 组装在一起，供上层依赖注入喵。 */
 class QingYuDatabase(context: android.content.Context) {
     val helper = DbHelper(context)
@@ -1289,6 +1440,7 @@ class QingYuDatabase(context: android.content.Context) {
     val favorites = FavoriteStore(helper)
     val memories = MemoryStore(helper)
     val attachments = AttachmentStore(helper)
+    val stickers = StickerStore(helper)
 
     /** 包一层，方便 UI 统一处理数据库异常喵。 */
     suspend fun <T> guarded(block: suspend () -> T): Result<T> = runCatchingResult { block() }
