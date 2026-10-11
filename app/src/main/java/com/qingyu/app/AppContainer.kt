@@ -21,6 +21,9 @@ import com.qingyu.app.remote.UtilityLlmClient
 import com.qingyu.app.remote.VisionClient
 import com.qingyu.app.tts.SpeechPlayer
 import com.qingyu.app.tts.TextToSpeechEngine
+import com.qingyu.app.notify.AppVisibility
+import com.qingyu.app.notify.ReplyNotifier
+import com.qingyu.app.data.repo.ChatReplyCoordinator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -74,6 +77,31 @@ class AppContainer(context: Context) {
     val archive: ChatArchive by lazy { ChatArchive(appContext, database) }
     val tts: TextToSpeechEngine by lazy { TextToSpeechEngine(appContext) }
     val speech: SpeechPlayer by lazy { SpeechPlayer(appContext, speechClient, settings) }
+
+    /**
+     * 应用是否在前台喵。回复跑完要不要发系统通知靠它判断喵。
+     *
+     * 由 [QingYuApp] 注册到 Activity 生命周期上，所以这里只是拿同一个实例喵。
+     */
+    val appVisibility: AppVisibility = AppVisibility()
+
+    val replyNotifier: ReplyNotifier by lazy { ReplyNotifier(appContext) }
+
+    /**
+     * 发送与生成流水线的主人喵。
+     *
+     * 它跑在 [appScope] 上，所以**退出聊天框、甚至退出应用都不会中断回复**喵——
+     * 这是用户明确要求的能力，也是它不放在 ViewModel 里的唯一原因喵。
+     */
+    val replyCoordinator: ChatReplyCoordinator by lazy {
+        ChatReplyCoordinator(
+            engine = chatEngine,
+            scope = appScope,
+            notifier = replyNotifier,
+            visibility = appVisibility,
+            appContext = appContext,
+        )
+    }
 
     companion object {
         @Volatile
