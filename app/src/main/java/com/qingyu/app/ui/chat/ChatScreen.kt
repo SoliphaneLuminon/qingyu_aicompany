@@ -2,13 +2,22 @@ package com.qingyu.app.ui.chat
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import android.graphics.BitmapFactory
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -17,20 +26,33 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.automirrored.outlined.VolumeOff
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
+import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
+import androidx.compose.material.icons.outlined.CardGiftcard
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.EmojiEmotions
+import androidx.compose.material.icons.outlined.KeyboardVoice
 import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.PhoneInTalk
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -45,6 +67,9 @@ import com.qingyu.app.ui.theme.QyChatBackgroundDark
 import com.qingyu.app.ui.theme.QyChatBackgroundLight
 import com.qingyu.app.ui.vm.ChatUiState
 import com.qingyu.app.ui.vm.ChatViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import java.util.Calendar
 
 sealed interface TimelineItem {
@@ -72,6 +97,10 @@ fun ChatScreen(
     onOpenChatInfo: () -> Unit,
     /** 首启引导里那句「去设置」跳到哪；顶栏的「⋯」不再是它喵。 */
     onOpenSettings: () -> Unit,
+    /** 打开实时语音通话页喵。 */
+    onStartCall: () -> Unit = {},
+    /** 打开表情管理页喵。 */
+    onOpenStickerManager: () -> Unit = {},
     modifier: Modifier = Modifier,
     /** 软键盘当前占据的高度；0 表示键盘收起喵。 */
     imeBottomInset: Dp = 0.dp,
@@ -103,6 +132,26 @@ fun ChatScreen(
     val imagePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
     ) { uri -> if (uri != null) viewModel.attachImage(uri) }
+
+    // 表情：从相册选一张 / 从文件选一个压缩包喵。
+    val stickerImagePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+    ) { uri -> if (uri != null) viewModel.importStickerFromUri(uri) }
+    val stickerZipPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri -> if (uri != null) viewModel.importStickersFromZip(uri) }
+
+    // 录音权限：按住说话时才申请，而不是一进聊天页就弹窗——
+    // 用户还没表达要用语音，先要权限会显得突兀喵。
+    val audioPermission = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            viewModel.startRecording()
+        } else {
+            viewModel.showBanner("没有麦克风权限，按住说话用不了")
+        }
+    }
 
     val timeline = remember(state.messages, state.stream, showReasoning) {
         buildTimeline(state).filter { it !is TimelineItem.Reason || showReasoning }
@@ -164,7 +213,12 @@ fun ChatScreen(
                         val topTyping = state.topBarTyping || state.stream.generating
                         if (topTyping) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                PersonaAvatar(emoji = persona?.avatarEmoji ?: "🌙", size = 34.dp, emphasize = true)
+                                PersonaAvatar(
+                                        emoji = persona?.avatarEmoji ?: "🌙",
+                                        avatarImage = persona?.avatarImage.orEmpty(),
+                                        size = 34.dp,
+                                        emphasize = true,
+                                    )
                                 Spacer(Modifier.width(10.dp))
                                 Text(
                                     text = "对方正在输入中…",
@@ -174,7 +228,12 @@ fun ChatScreen(
                             }
                         } else {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                PersonaAvatar(emoji = persona?.avatarEmoji ?: "🌙", size = 34.dp, emphasize = true)
+                                PersonaAvatar(
+                                        emoji = persona?.avatarEmoji ?: "🌙",
+                                        avatarImage = persona?.avatarImage.orEmpty(),
+                                        size = 34.dp,
+                                        emphasize = true,
+                                    )
                                 Spacer(Modifier.width(10.dp))
                                 Column {
                                     Text(
@@ -229,6 +288,22 @@ fun ChatScreen(
                         }
                     },
                     onRetry = viewModel::retryLast,
+                    onToggleStickerPanel = viewModel::toggleStickerPanel,
+                    onTogglePlusPanel = viewModel::togglePlusPanel,
+                    onPickSticker = viewModel::sendSticker,
+                    onImportSticker = { stickerImagePicker.launch("image/*") },
+                    onOpenStickerManager = onOpenStickerManager,
+                    onOpenRedPacket = viewModel::openRedPacket,
+                    onVoiceHoldStart = {
+                        // 先问权限再开录；已经有权限就直接开始喵。
+                        if (viewModel.hasAudioPermission()) {
+                            viewModel.startRecording()
+                        } else {
+                            audioPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+                        }
+                    },
+                    onVoiceHoldEnd = { viewModel.stopRecordingAndSend() },
+                    onStartCall = onStartCall,
                     modifier = Modifier.fillMaxWidth(),
                 )
             },
@@ -367,7 +442,12 @@ private fun EmptyChatHint(persona: Persona?, modifier: Modifier = Modifier) {
         modifier = modifier.padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        PersonaAvatar(emoji = persona?.avatarEmoji ?: "🌙", size = 72.dp, emphasize = true)
+        PersonaAvatar(
+                        emoji = persona?.avatarEmoji ?: "🌙",
+                        avatarImage = persona?.avatarImage.orEmpty(),
+                        size = 72.dp,
+                        emphasize = true,
+                    )
         Spacer(Modifier.height(16.dp))
         Text(text = persona?.name ?: "轻语", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(6.dp))
@@ -398,6 +478,15 @@ private fun ChatInputBar(
     onToggleSearch: () -> Unit,
     onSpeakToggle: () -> Unit,
     onRetry: () -> Unit,
+    onToggleStickerPanel: () -> Unit,
+    onTogglePlusPanel: () -> Unit,
+    onPickSticker: (com.qingyu.app.data.Sticker) -> Unit,
+    onImportSticker: () -> Unit,
+    onOpenStickerManager: () -> Unit,
+    onOpenRedPacket: () -> Unit,
+    onVoiceHoldStart: () -> Unit,
+    onVoiceHoldEnd: () -> Unit,
+    onStartCall: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -409,7 +498,7 @@ private fun ChatInputBar(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                AnimatedVisibility(visible = state.stream.searching || state.importingImage) {
+                AnimatedVisibility(visible = state.stream.searching || state.importingImage || state.importingStickers) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -418,7 +507,13 @@ private fun ChatInputBar(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                        BreathingHint(text = if (state.importingImage) "正在处理图片…" else "正在联网检索…")
+                        BreathingHint(
+                            text = when {
+                                state.importingStickers -> "正在导入表情…"
+                                state.importingImage -> "正在处理图片…"
+                                else -> "正在联网检索…"
+                            },
+                        )
                     }
                 }
 
@@ -427,6 +522,10 @@ private fun ChatInputBar(
                         attachments = state.pendingAttachments,
                         onRemove = onRemoveAttachment,
                     )
+                }
+
+                AnimatedVisibility(visible = state.recording) {
+                    RecordingIndicator(startedAt = state.recordingStartedAt)
                 }
 
                 AnimatedVisibility(visible = state.lastFailedInput != null) {
@@ -463,19 +562,24 @@ private fun ChatInputBar(
                 }
             }
 
+            // 输入行按微信排：语音 | 输入框 | 表情 | ＋喵。
+            //
+            // 顺序不是随意的：语音与表情都是"另一种表达方式"，紧贴输入框两侧，
+            // 手指从输入框出发左右各挪一格就能碰到；＋ 是"别的功能"，
+            // 放最右边与它收纳的联网/通话/红包一致——都不属于"说话"本身喵。
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 6.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
+                    .padding(start = 6.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.Bottom,
             ) {
-                IconButton(onClick = onPickImage, enabled = !state.importingImage) {
-                    Icon(
-                        imageVector = Icons.Outlined.AddPhotoAlternate,
-                        contentDescription = "发送图片",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                // 最左：按住说话。松手即发送，不必再点一次发送键喵。
+                HoldToTalkButton(
+                    recording = state.recording,
+                    onHoldStart = onVoiceHoldStart,
+                    onHoldEnd = onVoiceHoldEnd,
+                )
+
                 TextField(
                     value = state.input,
                     onValueChange = onInputChange,
@@ -492,47 +596,386 @@ private fun ChatInputBar(
                         disabledIndicatorColor = Color.Transparent,
                     ),
                 )
-                Spacer(Modifier.width(4.dp))
-                IconButton(onClick = onToggleSearch) {
+
+                IconButton(onClick = onToggleStickerPanel) {
                     Icon(
-                        imageVector = if (state.searchEnabled) Icons.Outlined.Public else Icons.Outlined.Language,
-                        contentDescription = if (state.searchEnabled) "联网已开启" else "联网已关闭",
-                        tint = if (state.searchEnabled) {
+                        imageVector = Icons.Outlined.EmojiEmotions,
+                        contentDescription = "表情",
+                        tint = if (state.stickerPanelOpen) {
                             MaterialTheme.colorScheme.primary
                         } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                            MaterialTheme.colorScheme.onSurfaceVariant
                         },
                     )
                 }
-                IconButton(onClick = onSpeakToggle) {
-                    Icon(
-                        imageVector = if (speaking) {
-                            Icons.AutoMirrored.Outlined.VolumeOff
-                        } else {
-                            Icons.AutoMirrored.Outlined.VolumeUp
-                        },
-                        contentDescription = "朗读",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+
+                // 有内容可发时，＋ 让位给发送键：微信也是这个行为，
+                // 打完字最想点的就是发送，不该还要先收起一个面板喵。
+                if (state.canSend) {
+                    CircleActionButton(
+                        icon = Icons.AutoMirrored.Outlined.Send,
+                        contentDescription = "发送",
+                        container = MaterialTheme.colorScheme.primary,
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        onClick = onSend,
                     )
+                } else {
+                    IconButton(onClick = onTogglePlusPanel) {
+                        Icon(
+                            imageVector = if (state.plusPanelOpen) Icons.Outlined.Close else Icons.Outlined.AddCircleOutline,
+                            contentDescription = "更多",
+                            tint = if (state.plusPanelOpen) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
                 }
-                CircleActionButton(
-                    icon = Icons.AutoMirrored.Outlined.Send,
-                    contentDescription = "发送",
-                    container = if (state.canSend) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.surfaceContainerHigh
-                    },
-                    tint = if (state.canSend) {
-                        MaterialTheme.colorScheme.onPrimary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                    },
-                    enabled = state.canSend,
-                    onClick = onSend,
+            }
+
+            // 表情面板与 ＋ 面板互斥，同时最多开一个喵。
+            AnimatedVisibility(visible = state.stickerPanelOpen) {
+                StickerPanel(
+                    stickers = state.stickers,
+                    onPick = onPickSticker,
+                    onImport = onImportSticker,
+                    onManage = onOpenStickerManager,
+                )
+            }
+
+            AnimatedVisibility(visible = state.plusPanelOpen) {
+                PlusPanel(
+                    searchEnabled = state.searchEnabled,
+                    onToggleSearch = onToggleSearch,
+                    onPickImage = onPickImage,
+                    onStartCall = onStartCall,
+                    onRedPacket = onOpenRedPacket,
+                    onSpeakToggle = onSpeakToggle,
+                    speaking = speaking,
+                    onStop = onStop,
                 )
             }
         }
+    }
+}
+
+/**
+ * 按住说话按钮喵。
+ *
+ * 用 `detectTapGestures` 的 `onPress` 而不是 `onLongClick`：这里要的是
+ * **按住期间一直录、松手立刻停**喵。`onLongClick` 只在跨过阈值时触发一次，
+ * 拿不到"松开"那一刻；而 `onPress` 的回调在整个按压期间挂起，
+ * 返回时正好就是松手或取消，语义严丝合缝喵。
+ *
+ * 用 `onPress` 也顺带解决了另一个坑：手写 `awaitPointerEventScope` 循环时，
+ * 协程捕获的是**进入那一刻**的 `recording` 值，之后状态变了它也看不到，
+ * 于是会反复触发开始/结束。`onPress` 每次按压都是一次新的挂起，不存在这个问题喵。
+ */
+@Composable
+private fun HoldToTalkButton(
+    recording: Boolean,
+    onHoldStart: () -> Unit,
+    onHoldEnd: () -> Unit,
+) {
+    val scale by animateFloatAsState(
+        targetValue = if (recording) 1.12f else 1f,
+        animationSpec = spring(dampingRatio = 0.5f, stiffness = 900f),
+        label = "holdTalkScale",
+    )
+    val tint = if (recording) {
+        MaterialTheme.colorScheme.error
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Box(
+        modifier = Modifier
+            .padding(bottom = 2.dp)
+            .size(48.dp)
+            .scale(scale)
+            .clip(CircleShape)
+            .background(
+                if (recording) {
+                    MaterialTheme.colorScheme.errorContainer
+                } else {
+                    Color.Transparent
+                },
+            )
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onPress = {
+                        onHoldStart()
+                        // 挂起直到松手或被取消，两种情况都该停止录音喵。
+                        tryAwaitRelease()
+                        onHoldEnd()
+                    },
+                )
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = if (recording) Icons.Outlined.Mic else Icons.Outlined.KeyboardVoice,
+            contentDescription = "按住说话",
+            tint = tint,
+        )
+        // 录音中给一圈外环，明确"正在录"这件事不是猜的喵。
+        if (recording) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .border(1.5.dp, tint.copy(alpha = 0.55f), CircleShape),
+            )
+        }
+    }
+}
+
+/** 录音中的提示条：秒数 + 松手发送喵。 */
+@Composable
+private fun RecordingIndicator(startedAt: Long) {
+    var elapsed by remember { mutableStateOf(0L) }
+    LaunchedEffect(startedAt) {
+        while (true) {
+            elapsed = System.currentTimeMillis() - startedAt
+            delay(200)
+        }
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.error),
+        )
+        Text(
+            text = "正在录音 %.1f 秒，松手发送".format(elapsed / 1000.0),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** 表情面板：网格 + 导入入口喵。 */
+@Composable
+private fun StickerPanel(
+    stickers: List<com.qingyu.app.data.Sticker>,
+    onPick: (com.qingyu.app.data.Sticker) -> Unit,
+    onImport: () -> Unit,
+    onManage: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 260.dp)
+            .background(MaterialTheme.colorScheme.surfaceContainerLow),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 8.dp, top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = if (stickers.isEmpty()) "还没有表情" else "${stickers.size} 个表情",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onImport) { Text("导入") }
+            TextButton(onClick = onManage) { Text("管理") }
+        }
+        if (stickers.isEmpty()) {
+            Text(
+                text = "从相册选一张图，或导入一个压缩包喵",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 20.dp),
+            )
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(4),
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                gridItems(stickers, key = { it.id }) { sticker ->
+                    StickerCell(sticker = sticker, onClick = { onPick(sticker) })
+                }
+            }
+        }
+    }
+}
+
+/** 一个表情格子：图 + 名字喵。 */
+@Composable
+private fun StickerCell(
+    sticker: com.qingyu.app.data.Sticker,
+    onClick: () -> Unit,
+) {
+    val context = LocalContext.current
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, sticker.id, sticker.filePath) {
+        value = withContext(Dispatchers.IO) {
+            runCatching { BitmapFactory.decodeFile(sticker.filePath)?.asImageBitmap() }.getOrNull()
+        }
+    }
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(4.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            contentAlignment = Alignment.Center,
+        ) {
+            val image = bitmap
+            if (image != null) {
+                Image(
+                    bitmap = image,
+                    contentDescription = sticker.name,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.size(56.dp),
+                )
+            } else {
+                Text("🖼", style = MaterialTheme.typography.titleMedium)
+            }
+        }
+        Text(
+            text = sticker.name,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
+ * 「＋」面板喵。
+ *
+ * 收纳的是"不属于打字"的功能：联网搜索、语音通话、红包，以及发图片喵。
+ * 这些原来挤在输入行里，把输入框压得很窄；收进面板之后输入行只剩四格，
+ * 每一格都够大、不会误触喵。
+ */
+@Composable
+private fun PlusPanel(
+    searchEnabled: Boolean,
+    onToggleSearch: () -> Unit,
+    onPickImage: () -> Unit,
+    onStartCall: () -> Unit,
+    onRedPacket: () -> Unit,
+    onSpeakToggle: () -> Unit,
+    speaking: Boolean,
+    onStop: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .padding(vertical = 14.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+            PlusAction(
+                icon = if (searchEnabled) Icons.Outlined.Public else Icons.Outlined.Language,
+                label = if (searchEnabled) "联网已开" else "联网搜索",
+                highlight = searchEnabled,
+                onClick = onToggleSearch,
+            )
+            PlusAction(
+                icon = Icons.Outlined.AddPhotoAlternate,
+                label = "图片",
+                onClick = onPickImage,
+            )
+            PlusAction(
+                icon = Icons.Outlined.PhoneInTalk,
+                label = "语音通话",
+                onClick = onStartCall,
+            )
+            PlusAction(
+                icon = Icons.Outlined.CardGiftcard,
+                label = "红包",
+                onClick = onRedPacket,
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+            PlusAction(
+                icon = if (speaking) Icons.AutoMirrored.Outlined.VolumeOff else Icons.AutoMirrored.Outlined.VolumeUp,
+                label = if (speaking) "停止朗读" else "朗读",
+                onClick = onSpeakToggle,
+            )
+            if (speaking) {
+                PlusAction(
+                    icon = Icons.Outlined.Stop,
+                    label = "停止生成",
+                    onClick = onStop,
+                )
+            }
+        }
+    }
+}
+
+/** ＋ 面板里的一个圆形动作喵。 */
+@Composable
+private fun PlusAction(
+    icon: ImageVector,
+    label: String,
+    highlight: Boolean = false,
+    onClick: () -> Unit,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(
+                    if (highlight) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceContainerHigh
+                    },
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = if (highlight) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
