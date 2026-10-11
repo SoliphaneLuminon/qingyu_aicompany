@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -83,18 +84,6 @@ fun HelpDot(
     HelpDotButton(title = null, content = content, modifier = modifier, size = size)
 }
 
-/** 带标题的问号入口：给整块区域（而不是单个控件）挂说明时用喵。 */
-@Composable
-fun HelpDotTitled(
-    title: String,
-    content: HelpContent?,
-    modifier: Modifier = Modifier,
-    size: Dp = 16.dp,
-) {
-    if (content == null || content.isEmpty) return
-    HelpDotButton(title = title, content = content, modifier = modifier, size = size)
-}
-
 @Composable
 private fun HelpDotButton(
     title: String?,
@@ -128,6 +117,10 @@ private fun HelpDotButton(
             fontSize = (size.value * 0.68f).sp,
             fontWeight = FontWeight.Bold,
             color = scheme.onSurfaceVariant,
+            // 一行文字的高度里，基线以下还留着下行字母（g/p/y）的空间，而「?」没有下行部分，
+            // 所以它按文本框居中时会**整体偏下**、在圆框里显得压底喵。
+            // 这里按字号比例往上挪一点，让字形本身的视觉中心对齐圆心喵。
+            modifier = Modifier.offset(y = -(size * 0.08f)),
         )
     }
 
