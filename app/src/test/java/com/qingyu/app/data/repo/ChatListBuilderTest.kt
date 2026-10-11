@@ -9,10 +9,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 首页角色列表的配对与排序喵。
+ * 主界面对话列表的配对与排序喵。
  *
- * 这里错了不会崩，只会"顺序莫名"或"刚建的角色不见了"，
+ * 这里错了不会崩，只会"顺序莫名"或"刚聊过的角色不见了"，
  * 从界面上很难判断是不是 bug，所以规则必须钉住喵。
+ *
+ * 注意主界面的口径已经变了：**只列有对话、且没被移除的角色**。
+ * 从没聊过的人属于通讯录，不再是主界面的职责喵。
  */
 class ChatListBuilderTest {
 
@@ -29,6 +32,7 @@ class ChatListBuilderTest {
         updatedAt: Long,
         messageCount: Int = 4,
         preview: String = "",
+        hidden: Boolean = false,
     ) = Conversation(
         id = id,
         personaId = personaId,
@@ -37,6 +41,7 @@ class ChatListBuilderTest {
         updatedAt = updatedAt,
         lastMessagePreview = preview,
         messageCount = messageCount,
+        hidden = hidden,
     )
 
     @Test
@@ -53,29 +58,45 @@ class ChatListBuilderTest {
     }
 
     @Test
-    fun `没聊过的角色也在列表里且能排到前面`() {
-        // 刚建的角色（createdAt 最新）应当立刻出现在最前面——
-        // 这正是"新建角色后必须再建对话才看得到"那个 bug 的反面喵。
+    fun `从没聊过的角色不进主界面`() {
+        // 没聊过的人属于通讯录。微信的聊天列表也不会列出从来没聊过的人喵。
         val list = buildChatList(
-            personas = listOf(
-                persona(1, "老朋友", createdAt = 10L),
-                persona(2, "刚建的", createdAt = 500L),
-            ),
+            personas = listOf(persona(1, "老朋友"), persona(2, "刚建的")),
             conversations = listOf(conversation(10, 1, updatedAt = 100L)),
         )
-        assertEquals(listOf("刚建的", "老朋友"), list.map { it.persona.name })
-        assertTrue("刚建的角色还没有对话", list.first().conversation == null)
-        assertTrue("刚建的角色应标记为没聊过", list.first().neverChatted)
+        assertEquals(listOf("老朋友"), list.map { it.persona.name })
     }
 
     @Test
-    fun `有对话但一条消息都没有也算没聊过`() {
-        // openConversation 会建出空对话，这不该让列表显示一个空预览喵。
+    fun `空对话不算聊过`() {
+        // 进角色时 latestOrCreate 会建出空对话；点进去看一眼再退出不该多出一行喵。
         val list = buildChatList(
             personas = listOf(persona(1, "甲")),
             conversations = listOf(conversation(10, 1, updatedAt = 100L, messageCount = 0)),
         )
-        assertTrue(list.first().neverChatted)
+        assertEquals(emptyList<Any>(), list)
+    }
+
+    @Test
+    fun `被移除的对话不出现在主界面`() {
+        // 「删除对话」= 隐藏：角色与消息都还在，只是不在主界面列出来喵。
+        val list = buildChatList(
+            personas = listOf(persona(1, "甲"), persona(2, "乙")),
+            conversations = listOf(
+                conversation(10, 1, updatedAt = 100L, hidden = true),
+                conversation(20, 2, updatedAt = 200L),
+            ),
+        )
+        assertEquals(listOf("乙"), list.map { it.persona.name })
+    }
+
+    @Test
+    fun `全部被移除时主界面为空`() {
+        val list = buildChatList(
+            personas = listOf(persona(1, "甲")),
+            conversations = listOf(conversation(10, 1, updatedAt = 100L, hidden = true)),
+        )
+        assertEquals(emptyList<Any>(), list)
     }
 
     @Test
@@ -94,26 +115,26 @@ class ChatListBuilderTest {
     }
 
     @Test
-    fun `没有对话的角色 conversation 为 null 且不报错`() {
+    fun `最近的那个被移除时整个角色都从主界面消失`() {
+        // 先取最近那段、再看它是否被移除。顺序反了的话更早的残留会顶上来，
+        // 看起来就像「删除对话」没生效喵。
         val list = buildChatList(
-            personas = listOf(persona(1, "甲", createdAt = 50L)),
-            conversations = emptyList(),
+            personas = listOf(persona(1, "甲")),
+            conversations = listOf(
+                conversation(10, 1, updatedAt = 100L, preview = "旧的"),
+                conversation(11, 1, updatedAt = 900L, hidden = true),
+            ),
         )
-        assertEquals(1, list.size)
-        assertNull(list.first().conversation)
-        assertFalse(list.first().neverChatted.not())
-        // 排序时间回退到角色创建时间，不能是 0 或负数喵。
-        assertEquals(50L, list.first().sortTime)
+        assertEquals(emptyList<Any>(), list)
     }
 
     @Test
     fun `对话属于已删除的角色时被忽略`() {
         val list = buildChatList(
-            personas = listOf(persona(1, "甲", createdAt = 10L)),
+            personas = listOf(persona(1, "甲")),
             conversations = listOf(conversation(99, personaId = 404, updatedAt = 999L)),
         )
-        assertEquals(1, list.size)
-        assertNull("孤儿对话不该挂到别人身上", list.first().conversation)
+        assertEquals(emptyList<Any>(), list)
     }
 
     @Test
