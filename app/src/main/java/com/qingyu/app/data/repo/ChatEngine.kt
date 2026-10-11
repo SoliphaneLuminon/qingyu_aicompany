@@ -371,6 +371,12 @@ class ChatEngine(
         // 这个角色能发哪些表情包：交给提示词，模型才知道自己可以发喵。
         val stickerNames = runCatching { db.stickers.list().map { it.name } }.getOrDefault(emptyList())
 
+        // 发表情包的积极度跟着**实际生效的温度**走喵：
+        // 角色可以单独覆盖温度，而那个才是真正发出去的参数；
+        // 若这里读全局设置，会给模型一个与它实际随机性不匹配的频率要求喵。
+        val effectiveTemperature = persona.temperatureOverride ?: settings.temperature
+        val stickerEagerness = StickerEagerness.levelFor(effectiveTemperature)
+
         // 用户开启联网时先检索，把资料塞进系统提示词喵。
         val searchHits = if (searchRequested) runSearch(history) else emptyList()
         val searchContext = if (searchHits.isEmpty()) "" else {
@@ -402,6 +408,7 @@ class ChatEngine(
             temporalHint = temporalHint,
             // 把可用表情名交给提示词，模型才知道自己能发哪些喵。
             stickerNames = stickerNames,
+            stickerEagerness = stickerEagerness,
         ).let { base -> attachImagesForNativeVision(base, history, settings) }
 
         // 润色：超时或出错都自动降级为上面这版原生提示词，不会拖住生成喵。
@@ -426,7 +433,17 @@ class ChatEngine(
         val keptTemporal = temporalHint.isBlank() ||
             !refineOutcome.refined ||
             refineOutcome.prompt.contains(temporal.phase.label)
-        val systemContent = if (keptTemporal) refineOutcome.prompt else rawSystem
+
+        // 同理也要护住【发送要求】喵：它决定了回复会不会被断成多条短消息。
+        // 小模型很容易把它当排版说明删掉，而一旦没了它，主模型就会交出一整段
+        // 不带逗号的长句——用户在聊天里看到的就是"既没拆开也没逗号"喵。
+        // 宁可放弃这次润色，也不能让断句要求丢掉喵。
+        val keptSendingRules = !settings.burstReplies ||
+            !refineOutcome.refined ||
+            PromptBuilder.keepsSendingRules(refineOutcome.prompt)
+
+        val systemContent =
+            if (keptTemporal && keptSendingRules) refineOutcome.prompt else rawSystem
 
         val turns = if (systemIndex >= 0) {
             built.toMutableList().also { it[systemIndex] = ChatTurn("system", systemContent) }
@@ -469,10 +486,13 @@ class ChatEngine(
         // 那时再去读 `state.bubbles` 只会拿到空列表——搜索来源和异步提炼都会跟着失联喵。
         val savedIds = ArrayList<Long>()
         val savedReplies = ArrayList<String>()
+        // 本轮一共落了几条表情：判断"到底有没有产出"时要用喵。
+        var savedStickerCount = 0
         val accumulator = BurstAccumulator { segment ->
             val persisted = persistBubble(conversationId, segment, savedReplies.size)
             // 表情先上屏：时间戳排在文字之前也行，反正它们各是独立一条喵。
             persisted.stickers.forEach { emit(ChatEvent.Saved(it)) }
+            savedStickerCount += persisted.stickers.size
             val saved = persisted.bubble
             // null 表示这一段只有表情、没有文字：表情已经发过 Saved 事件了，
             // 这里不能再拿一条空文本去顶替它喵。
@@ -489,7 +509,7 @@ class ChatEngine(
 
         try {
             val model = persona.modelOverride.ifBlank { settings.model }
-            val temperature = persona.temperatureOverride ?: settings.temperature
+            val temperature = effectiveTemperature
             val deltas = client.stream(
                 endpoint = settingsStore.chatEndpoint,
                 apiKey = settings.apiKey,
@@ -548,6 +568,12 @@ class ChatEngine(
             val firstAssistantId = savedIds.firstOrNull { it > 0L } ?: 0L
             if (searchHits.isNotEmpty() && firstAssistantId > 0L) {
                 messages.updateSearchResults(firstAssistantId, searchHits)
+            }
+            // 一个字都没产出：模型给了空回复，或全部内容都是被清掉的乱码喵。
+            // 这时必须明确报错，否则界面上"正在输入"会安静地消失、用户以为消息丢了喵。
+            if (savedIds.isEmpty() && savedStickerCount == 0 && reasoningText.isBlank()) {
+                emit(ChatEvent.Failed("这次没生成出内容来，再说一句试试"))
+                return@flow
             }
             // 回复已经拿到手了，提炼才敢往后台丢——它绝不该让这次回复多等一秒喵。
             launchExtraction(persona = persona, history = history, replies = savedReplies)
@@ -646,9 +672,13 @@ class ChatEngine(
             message.copy(id = id)
         }
 
-        val bodyText = parsed.text
+        // 挡掉"只是个标识符"的行喵（见 [GarbledReply]）：有用户反馈过偶尔收到一条
+        // 长得像 UUID 的"回复"，而全项目都不生成这种串，它来自模型/网关那边喵。
+        // 拿不到原始响应就无法根治，但这类内容一律是垃圾，落库前清掉用户至少不会看到乱码喵。
+        val bodyText = GarbledReply.stripOpaqueLines(parsed.text)
         // 整段只有表情、没有文字时返回 null 气泡：
         // 若返回一条空文本气泡，调用方会拿它发 Saved，带着表情的 id 把表情覆盖成空白喵。
+        // 清掉乱码后剩下的也是空，同样按"没有文字"处理喵。
         val bubble = if (bodyText.isBlank()) {
             null
         } else {
