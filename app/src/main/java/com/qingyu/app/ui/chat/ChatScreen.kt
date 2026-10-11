@@ -76,6 +76,13 @@ fun ChatScreen(
     /** 软键盘当前占据的高度；0 表示键盘收起喵。 */
     imeBottomInset: Dp = 0.dp,
     /**
+     * 系统底部让位（导航栏 / 手势条）喵。
+     *
+     * 本页是 edge-to-edge 且 `contentWindowInsets` 显式置零，没人替它避让系统栏喵；
+     * 不处理的话输入栏会压在手势条下面，按钮点不到喵。
+     */
+    systemBottomInset: Dp = 0.dp,
+    /**
      * 外壳已经为底部让出的高度，例如底部标签栏喵。
      *
      * 键盘高度是**相对屏幕底**量的，而本页可用区域的底边已经在内侧被让掉一截喵
@@ -84,8 +91,11 @@ fun ChatScreen(
      */
     reservedBottomInset: Dp = 0.dp,
 ) {
-    // 真正还需要抬升的量：键盘高度减去外壳已经让掉的那一段，下限为 0喵。
-    val bottomGap = (imeBottomInset - reservedBottomInset).coerceAtLeast(0.dp)
+    // 键盘与系统栏取**较大者**而不是相加喵：
+    // 键盘弹起时它本身已盖住导航栏，相加会多让出一截空白；
+    // 取较大者两种情形都对——有键盘让给键盘，没键盘让给手势条喵。
+    val bottomGap = (maxOf(imeBottomInset, systemBottomInset) - reservedBottomInset)
+        .coerceAtLeast(0.dp)
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
     var menuOpen by remember { mutableStateOf(false) }
