@@ -95,6 +95,13 @@ data class Conversation(
     val lastMessagePreview: String = "",
     val messageCount: Int = 0,
     val pinned: Boolean = false,
+    /**
+     * 已从主界面移除喵。
+     *
+     * 这是个**隐藏**标记，不是删除：角色、消息、记忆全都还在喵。
+     * 从通讯录点进这个角色、或发出/收到新消息，它就会回到主界面喵。
+     */
+    val hidden: Boolean = false,
 )
 
 /**
