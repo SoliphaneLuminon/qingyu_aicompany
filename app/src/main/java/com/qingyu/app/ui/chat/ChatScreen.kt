@@ -46,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -275,6 +276,7 @@ fun ChatScreen(
                     state = state,
                     speaking = speaking,
                     onInputChange = viewModel::onInputChange,
+                    onInputFocusChanged = viewModel::onInputFocusChanged,
                     onSend = viewModel::send,
                     onStop = viewModel::stopGenerating,
                     onPickImage = { imagePicker.launch("image/*") },
@@ -471,6 +473,7 @@ private fun ChatInputBar(
     state: ChatUiState,
     speaking: Boolean,
     onInputChange: (String) -> Unit,
+    onInputFocusChanged: (Boolean) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
     onPickImage: () -> Unit,
@@ -583,7 +586,11 @@ private fun ChatInputBar(
                 TextField(
                     value = state.input,
                     onValueChange = onInputChange,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        // 输入框开合要上报：用户发完消息又点回输入框时，
+                        // 回复要往后推一推，别把他正打的字打断在中间喵。
+                        .onFocusChanged { onInputFocusChanged(it.isFocused) },
                     placeholder = { Text("说点什么…") },
                     maxLines = 5,
                     shape = RoundedCornerShape(22.dp),
