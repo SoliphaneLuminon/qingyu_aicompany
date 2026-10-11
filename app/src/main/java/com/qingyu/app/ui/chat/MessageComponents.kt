@@ -1,5 +1,6 @@
 package com.qingyu.app.ui.chat
 
+import android.graphics.BitmapFactory
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
@@ -8,6 +9,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -41,13 +44,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -59,10 +66,14 @@ import com.qingyu.app.ui.theme.QyPetBubbleDark
 import com.qingyu.app.ui.theme.QyUserBubbleDark
 import com.qingyu.app.ui.theme.QyUserBubbleLight
 import com.qingyu.app.data.ChatMessage
+import com.qingyu.app.data.MessageKind
 import com.qingyu.app.data.MessageRole
 import com.qingyu.app.data.Persona
+import com.qingyu.app.data.RedPacket
 import com.qingyu.app.ui.components.PersonaAvatar
 import com.qingyu.app.ui.components.TypingDots
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** 思考过程折叠块。默认折叠，只显示"思考了 2.4 秒"喵。 */
 @Composable
@@ -182,7 +193,11 @@ fun MessageRow(
     ) {
         if (!isUser) {
             if (showAvatar) {
-                PersonaAvatar(emoji = persona?.avatarEmoji ?: "🌙", size = 30.dp)
+                PersonaAvatar(
+                    emoji = persona?.avatarEmoji ?: "🌙",
+                    avatarImage = persona?.avatarImage.orEmpty(),
+                    size = 30.dp,
+                )
                 Spacer(Modifier.width(8.dp))
             } else {
                 Spacer(Modifier.width(38.dp))
@@ -208,14 +223,53 @@ fun MessageRow(
                     }
                     // 有图时把图片放在气泡外：图片本身不需要气泡底色，压在一起会显得脏喵
                     Column(horizontalAlignment = if (isUser) Alignment.End else Alignment.Start) {
-                        if (message.attachments.isNotEmpty()) {
-                            MessageImages(
-                                attachments = message.attachments,
+                        when (message.kind) {
+                            // 表情包：只画图，**不画名字**喵。
+                            // 名字是给模型看的文字那一半，摆进气泡里会让用户看到
+                            // "开心"两个字压在图上，而微信里表情就是一张图喵。
+                            MessageKind.STICKER -> StickerBubble(
+                                message = message,
                                 onOpen = onOpenImage,
-                                modifier = Modifier.padding(bottom = 4.dp),
                             )
+
+                            // 红包：画成一张能看出金额与留言的卡片喵。
+                            // 金额取自 payload 而不是解析 content，文案怎么改都不影响显示喵。
+                            MessageKind.RED_PACKET -> {
+                                val packet = RedPacket.fromPayload(message.payload)
+                                if (packet != null) {
+                                    RedPacketBubble(
+                                        amount = packet.amount,
+                                        wish = packet.wish,
+                                        modifier = Modifier.padding(bottom = 2.dp),
+                                    )
+                                } else {
+                                    // 老数据或被截断的 payload：退化成一句纯文本，不显示空白喵。
+                                    Text(
+                                        text = message.content,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = bubbleTextColor,
+                                        modifier = Modifier
+                                            .clip(shape)
+                                            .background(bubbleColor)
+                                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                                    )
+                                }
+                            }
+
+                            MessageKind.TEXT -> {
+                                if (message.attachments.isNotEmpty()) {
+                                    MessageImages(
+                                        attachments = message.attachments,
+                                        onOpen = onOpenImage,
+                                        modifier = Modifier.padding(bottom = 4.dp),
+                                    )
+                                }
+                            }
                         }
-                        if (message.content.isNotBlank() || message.error != null || streaming) {
+                        // 表情与红包都不再画文字气泡：内容已经在卡片/图里表达完了喵。
+                        val drawTextBubble = message.kind == MessageKind.TEXT &&
+                            (message.content.isNotBlank() || message.error != null || streaming)
+                        if (drawTextBubble) {
                             Column(
                                 modifier = Modifier
                                     .clip(shape)
@@ -338,6 +392,54 @@ fun MessageRow(
             ) {
                 Text(text = "我", style = MaterialTheme.typography.labelMedium, color = scheme.onPrimaryContainer)
             }
+        }
+    }
+}
+
+/**
+ * 表情包气泡喵。
+ *
+ * 只画图，不画名字喵。名字是这条消息**给模型看的那一半**（作为 content 进入上下文），
+ * 对用户来说表情就是一张图——把"开心"两个字压在图上，反而像在看文件名喵。
+ * 名字该出现的地方是表情管理页，那里才是给它命名的地方喵。
+ */
+@Composable
+private fun StickerBubble(
+    message: ChatMessage,
+    onOpen: (com.qingyu.app.data.Attachment) -> Unit,
+) {
+    val attachment = message.attachments.firstOrNull()
+    if (attachment == null) {
+        // 没有附件（例如导入的历史里只剩名字）：退化成文字，不显示空白喵。
+        Text(
+            text = message.content.ifBlank { "[表情]" },
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, attachment.localPath) {
+        value = withContext(Dispatchers.IO) {
+            runCatching { BitmapFactory.decodeFile(attachment.localPath)?.asImageBitmap() }.getOrNull()
+        }
+    }
+    Box(
+        modifier = Modifier
+            .size(120.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { onOpen(attachment) },
+        contentAlignment = Alignment.Center,
+    ) {
+        val image = bitmap
+        if (image != null) {
+            Image(
+                bitmap = image,
+                contentDescription = message.content,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            Text("🖼", style = MaterialTheme.typography.headlineMedium)
         }
     }
 }
