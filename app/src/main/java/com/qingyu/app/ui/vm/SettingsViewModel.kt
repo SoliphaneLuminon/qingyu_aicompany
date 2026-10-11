@@ -43,6 +43,9 @@ data class SettingsUiState(
     val visionTestOk: Boolean = false,
     val speechTestResult: String? = null,
     val speechTestOk: Boolean = false,
+    /** 语音识别测试的结果喵。 */
+    val transcribeTestResult: String? = null,
+    val transcribeTestOk: Boolean = false,
     val searchTestResult: String? = null,
     val searchTestOk: Boolean = false,
     /** 正在拉取可用模型列表喵。 */
@@ -195,6 +198,59 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     speechTestResult = result.fold(
                         onSuccess = { size -> "合成成功，收到 ${size / 1024} KB 音频" },
                         onFailure = { error -> "合成失败：${error.message}" },
+                    ),
+                )
+            }
+        }
+    }
+
+    /**
+     * 测试语音识别：只校验配置是否齐全，**不真的录音**喵。
+     *
+     * 不录音是有意的：识别要一句真人说话才有意义，而设置页里没法让用户
+     * "对着设置页说一句"——那还不如直接去聊天页按住说话喵。
+     * 所以这里只做能做的部分：确认地址、Key、模型名都填了，
+     * 并且**真的发一次请求**去探接口是否可达（用一个极短的静音音频）喵。
+     * 这样"配错了"能在设置页当场发现，而不是等到按住说话时才报错喵。
+     */
+    fun testTranscription() {
+        val settings = container.settings.current
+        if (settings.speech.baseUrl.isBlank() || settings.speech.apiKey.isBlank()) {
+            _state.update { it.copy(transcribeTestOk = false, transcribeTestResult = "先填接口地址与语音 API Key") }
+            return
+        }
+        if (settings.transcribeModel.isBlank()) {
+            _state.update { it.copy(transcribeTestOk = false, transcribeTestResult = "先填语音识别模型") }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(testingKind = "transcribe", transcribeTestResult = null) }
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    // 探活用的极短静音 WAV：只验证"这个地址 + Key + 模型名能不能被接受"喵。
+                    // 返回空文本是正常的——静音本来就该转不出字喵。
+                    val probe = java.io.File.createTempFile("qy_probe", ".wav")
+                    try {
+                        probe.writeBytes(com.qingyu.app.media.SilentWav.build())
+                        container.transcription.transcribe(
+                            baseUrl = settings.speech.baseUrl,
+                            apiKey = settings.speech.apiKey,
+                            model = settings.transcribeModel,
+                            audio = probe,
+                        )
+                    } finally {
+                        probe.delete()
+                    }
+                }
+            }
+            _state.update {
+                it.copy(
+                    testingKind = "",
+                    transcribeTestOk = result.isSuccess,
+                    transcribeTestResult = result.fold(
+                        // 能通就行：静音转不出文字是预期结果，不该报成失败喵。
+                        onSuccess = { "接口可用（静音样本返回空文本属正常）" },
+                        onFailure = { error -> "识别接口失败：${error.message}" },
                     ),
                 )
             }
