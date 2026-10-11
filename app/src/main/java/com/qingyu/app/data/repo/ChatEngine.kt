@@ -147,6 +147,30 @@ class ChatEngine(
     }
 
     /**
+     * 只生成、不插消息喵。
+     *
+     * 给"消息早已落库上屏、只是还没轮到生成"的流程用喵：用户发出消息的那一刻
+     * 消息就已经进库了（所以界面立刻能看到、也能立刻继续发），
+     * 之后等合并窗口关闭、且引擎空出来，才调用这里真正跑一轮喵。
+     *
+     * 与 [send] 的区别只有一件事：**绝不插入用户消息**喵。
+     * 之所以单开一个入口而不是让调用方传 `existingUserMessageId = 0`，
+     * 是因为那个参数的含义是"我还没插，你来插"——传 0 会插出重复消息喵。
+     */
+    fun generate(
+        conversationId: Long,
+        personaId: Long,
+        searchRequested: Boolean = false,
+    ): Flow<ChatEvent> = flow {
+        val settings = settingsStore.current
+        val persona = db.personas.get(personaId) ?: run {
+            emit(ChatEvent.Failed("角色不存在"))
+            return@flow
+        }
+        generateInto(conversationId, persona, settings, searchRequested).collect { emit(it) }
+    }
+
+    /**
      * 发送一条用户消息并流式接收回复喵。
      *
      * @param existingUserMessageId 若消息已经落库（例如失败重试），传入其 id 避免重复插入喵。
