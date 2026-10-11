@@ -1,6 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="qy_window_bg">#FFFAF7F5</color>
+    <!--
+      窗口背景：Compose 画出第一帧之前，屏幕上显示的就是它。
+
+      必须与 Compose 的 surface 同色，并且要有暗色版本——否则启动瞬间会闪一下
+      另一种明暗的底色（暗色主题下尤其明显，就是"开屏白一下"）。
+
+      浅色 = Color.kt 的 QySurface (#FFFFFF)
+      暗色 = Color.kt 的 QySurfaceDark (#191919)，见 values-night/colors.xml
+    -->
+    <color name="qy_window_bg">#FFFFFFFF</color>
+
+    <!-- 启动画面底色，用品牌色，仅在需要品牌开屏时使用 -->
     <color name="qy_brand">#FF6C5CE7</color>
     <color name="qy_brand_deep">#FF4B3FC4</color>
     <color name="qy_accent">#FFFF7EA8</color>
