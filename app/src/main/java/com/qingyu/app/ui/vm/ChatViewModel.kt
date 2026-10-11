@@ -9,10 +9,15 @@ import com.qingyu.app.AppContainer
 import com.qingyu.app.data.Attachment
 import com.qingyu.app.data.ChatMessage
 import com.qingyu.app.data.Conversation
+import com.qingyu.app.data.MessageKind
 import com.qingyu.app.data.MessageRole
 import com.qingyu.app.data.Persona
+import com.qingyu.app.data.RedPacket
+import com.qingyu.app.data.Sticker
 import com.qingyu.app.data.repo.ChatEvent
 import com.qingyu.app.data.repo.ChatStreamState
+import com.qingyu.app.media.StickerImporter
+import com.qingyu.app.core.TimeUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -21,6 +26,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 聊天页控制器，全项目最重的一个 ViewModel喵。
@@ -224,6 +230,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * 置顶 / 取消置顶某个角色的对话喵（长按列表项时用）。
+     *
+     * 置顶只影响**列表里的摆放位置**，不改活动时间、也不改 [chatList] 之外任何状态喵。
+     */
+    fun setPinned(persona: Persona, pinned: Boolean) {
+        viewModelScope.launch {
+            val conversation = db.conversations.of(persona.id) ?: return@launch
+            container.conversations.setPinned(conversation.id, pinned)
+            _state.update {
+                it.copy(banner = if (pinned) "已置顶「${persona.name}」" else "已取消置顶")
+            }
+            refreshPersonas()
+        }
+    }
+
+    /**
      * 清空当前对话的所有消息喵。
      *
      * 与 [hideCurrentChat] 的区别：**这个是真的删**，删完不可恢复，但角色保留喵。
@@ -371,6 +393,315 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 text = text,
                 attachments = attachments,
                 searchRequested = search,
+            ).collect { handleEvent(it) }
+        }
+    }
+
+    // ------------------------------------------------------------ 语音
+
+    fun togglePlusPanel() {
+        _state.update { it.copy(plusPanelOpen = !it.plusPanelOpen, stickerPanelOpen = false) }
+    }
+
+    /** 进二级页之前收起面板，否则回来时会看到它还开着喵。 */
+    fun togglePlusPanelOff() = _state.update { it.copy(plusPanelOpen = false) }
+
+    fun toggleStickerPanelOff() = _state.update { it.copy(stickerPanelOpen = false) }
+
+    fun showBanner(text: String) = _state.update { it.copy(banner = text) }
+
+    fun hasAudioPermission(): Boolean = container.audioRecorder.hasPermission()
+
+    /** 按住说话：开始录音喵。 */
+    fun startRecording() {
+        if (_state.value.recording) return
+        // start() 有两种失败形态：没权限/已在录返回 false，麦克风打不开抛异常喵。
+        // 只判返回值会让后者直接崩掉整个界面，所以两种都要接住喵。
+        val started = runCatching { container.audioRecorder.start() }
+        val ok = started.getOrDefault(false)
+        if (!ok) {
+            val reason = started.exceptionOrNull()?.message
+                ?: "开始录音失败，可能被别的应用占用了麦克风"
+            _state.update { it.copy(banner = reason) }
+            return
+        }
+        _state.update { it.copy(recording = true, recordingStartedAt = System.currentTimeMillis()) }
+    }
+
+    /**
+     * 松手：停止录音 → 转文字 → 当成普通消息发出去喵。
+     *
+     * 转写失败不静默吞掉：用户说了一句话却什么都没发生是最难排查的体验，
+     * 所以把失败原因摆到提示条上喵。
+     */
+    fun stopRecordingAndSend() {
+        if (!_state.value.recording) return
+        _state.update { it.copy(recording = false) }
+
+        viewModelScope.launch {
+            val file = container.audioRecorder.stop()
+            if (file == null) {
+                _state.update { it.copy(banner = "录得太短了，再按住说一会儿") }
+                return@launch
+            }
+
+            val settings = container.settings.current
+            _state.update { it.copy(banner = "正在识别…") }
+            val result = runCatching {
+                container.transcription.transcribe(
+                    baseUrl = settings.speech.baseUrl,
+                    apiKey = settings.speech.apiKey,
+                    model = settings.transcribeModel,
+                    audio = file,
+                )
+            }
+            file.delete()
+
+            result.fold(
+                onSuccess = { text ->
+                    if (text.isBlank()) {
+                        _state.update { it.copy(banner = "没听清，再说一次试试") }
+                    } else {
+                        // 识别结果写进输入框后直接发，用户不必再点一次发送喵。
+                        _state.update { it.copy(input = text, banner = null) }
+                        send()
+                    }
+                },
+                onFailure = { error ->
+                    _state.update { it.copy(banner = error.message ?: "语音识别失败") }
+                },
+            )
+        }
+    }
+
+    /** 录音中途取消（例如页面退出）喵。 */
+    fun cancelRecording() {
+        if (!_state.value.recording) return
+        container.audioRecorder.cancel()
+        _state.update { it.copy(recording = false) }
+    }
+
+    // ------------------------------------------------------------ 语音通话
+
+    fun setCallState(inCall: Boolean, status: String) {
+        _state.update { it.copy(inCall = inCall, callStatus = status) }
+    }
+
+    // ------------------------------------------------------------ 表情包
+
+    fun toggleStickerPanel() {
+        _state.update { it.copy(stickerPanelOpen = !it.stickerPanelOpen, plusPanelOpen = false) }
+        if (_state.value.stickers.isEmpty()) refreshStickers()
+    }
+
+    fun refreshStickers() {
+        viewModelScope.launch {
+            _state.update { it.copy(stickers = container.stickers.list()) }
+        }
+    }
+
+    fun closeStickerPanel() = _state.update { it.copy(stickerPanelOpen = false) }
+
+    /**
+     * 从相册导入一个表情，名字先用文件名，之后可以在表情管理页改喵。
+     */
+    fun importStickerFromUri(uri: android.net.Uri) {
+        viewModelScope.launch {
+            _state.update { it.copy(importingStickers = true) }
+            val result = runCatching {
+                // 复用 ImageStore 的解码链：它已经处理了 EXIF 转正、采样与缩放喵。
+                val attachment = container.imageStore.importFromUri(uri)
+                val bytes = java.io.File(attachment.localPath).readBytes()
+                val name = uri.lastPathSegment?.substringAfterLast('/')?.substringBeforeLast('.') ?: "表情"
+                container.imageStore.deleteFile(attachment)
+                container.stickers.add(name, bytes)
+            }
+            _state.update { current ->
+                current.copy(
+                    importingStickers = false,
+                    stickers = container.stickers.list(),
+                    banner = result.fold(
+                        onSuccess = { "已添加表情「${it.name}」" },
+                        onFailure = { it.message ?: "导入表情失败" },
+                    ),
+                )
+            }
+        }
+    }
+
+    /**
+     * 从压缩包批量导入表情喵。
+     *
+     * 解压是纯计算，放在 IO 上做；一个几百张的包会明显卡住主线程喵。
+     */
+    fun importStickersFromZip(uri: android.net.Uri) {
+        viewModelScope.launch {
+            _state.update { it.copy(importingStickers = true) }
+            val result = runCatching {
+                val bytes = withContext(Dispatchers.IO) {
+                    getApplication<Application>().contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: error("读不到这个文件")
+                }
+                val entries = withContext(Dispatchers.IO) { StickerImporter.entriesFromZip(bytes) }
+                if (entries.isEmpty()) error("这个压缩包里没有找到图片")
+                container.stickers.importEntries(entries)
+            }
+            _state.update { current ->
+                current.copy(
+                    importingStickers = false,
+                    stickers = container.stickers.list(),
+                    banner = result.fold(
+                        onSuccess = { "已导入 $it 个表情" },
+                        onFailure = { it.message ?: "导入失败" },
+                    ),
+                )
+            }
+        }
+    }
+
+    fun deleteSticker(sticker: Sticker) {
+        viewModelScope.launch {
+            container.stickers.delete(sticker)
+            _state.update { it.copy(stickers = container.stickers.list(), banner = "已删除表情") }
+        }
+    }
+
+    fun renameSticker(sticker: Sticker, name: String) {
+        viewModelScope.launch {
+            container.stickers.rename(sticker.id, name)
+            _state.update { it.copy(stickers = container.stickers.list()) }
+        }
+    }
+
+    /**
+     * 发一个表情包喵。
+     *
+     * 与普通发送的关键区别：**消息由 [StickerRepository.send] 自己落库**，
+     * 然后带着它的 id 走 `engine.send(existingUserMessageId = ...)`，
+     * 这样引擎不会再插一条重复的用户消息，但流式回复、打字机、记忆提炼
+     * 这些既有链路全都照常复用喵。
+     */
+    fun sendSticker(sticker: Sticker) {
+        val current = _state.value
+        val conversation = current.conversation ?: return
+        val persona = current.persona ?: return
+        if (current.stream.generating) return
+
+        _state.update {
+            it.copy(
+                stickerPanelOpen = false,
+                // 乐观上屏：立刻显示这个表情，不等落库往返喵。
+                messages = it.messages + ChatMessage(
+                    id = -System.currentTimeMillis(),
+                    conversationId = conversation.id,
+                    role = MessageRole.USER,
+                    content = sticker.name,
+                    timestamp = System.currentTimeMillis(),
+                    kind = MessageKind.STICKER,
+                    stickerId = sticker.id,
+                ),
+            )
+        }
+
+        if (conversation.hidden) {
+            viewModelScope.launch {
+                db.conversations.unhide(conversation.id)
+                refreshPersonas()
+            }
+        }
+
+        _state.update { it.copy(stream = ChatStreamState(), topBarTyping = false) }
+        streamJob?.cancel()
+        streamJob = viewModelScope.launch {
+            val saved = runCatching { container.stickers.send(conversation.id, sticker) }.getOrNull()
+                ?: return@launch
+            delay(400)
+            _state.update { it.copy(topBarTyping = true) }
+            engine.send(
+                conversationId = conversation.id,
+                personaId = persona.id,
+                // 名字就是文本那一半；图片那一半已经作为附件挂在 saved 上了喵。
+                text = sticker.name,
+                existingUserMessageId = saved.id,
+                attachments = db.attachments.listForMessage(saved.id),
+                searchRequested = _state.value.searchEnabled,
+            ).collect { handleEvent(it) }
+        }
+    }
+
+    // ------------------------------------------------------------ 红包
+
+    fun openRedPacket() = _state.update { it.copy(redPacketOpen = true) }
+
+    fun closeRedPacket() = _state.update { it.copy(redPacketOpen = false) }
+
+    /**
+     * 发一个虚拟红包喵。
+     *
+     * 金额与留言都会被写进消息正文，所以角色在上下文里看到的就是
+     * 「（发了一个 8.88 元的红包，留言：请你喝奶茶）」这样一句人话，
+     * 它会照常按自己的性格回应喵。**不接任何支付，钱是虚拟的**喵。
+     */
+    fun sendRedPacket(amount: Double, wish: String) {
+        val current = _state.value
+        val conversation = current.conversation ?: return
+        val persona = current.persona ?: return
+        if (current.stream.generating) return
+        if (amount <= 0.0) {
+            _state.update { it.copy(banner = "金额得大于 0") }
+            return
+        }
+
+        val packet = RedPacket(amount = amount.coerceAtMost(RedPacket.MAX_AMOUNT), wish = wish.trim())
+        val modelText = packet.toModelText()
+
+        _state.update {
+            it.copy(
+                redPacketOpen = false,
+                messages = it.messages + ChatMessage(
+                    id = -System.currentTimeMillis(),
+                    conversationId = conversation.id,
+                    role = MessageRole.USER,
+                    content = modelText,
+                    timestamp = System.currentTimeMillis(),
+                    kind = MessageKind.RED_PACKET,
+                    payload = RedPacket.toPayload(packet),
+                ),
+            )
+        }
+
+        if (conversation.hidden) {
+            viewModelScope.launch {
+                db.conversations.unhide(conversation.id)
+                refreshPersonas()
+            }
+        }
+
+        _state.update { it.copy(stream = ChatStreamState(), topBarTyping = false) }
+        streamJob?.cancel()
+        streamJob = viewModelScope.launch {
+            val saved = runCatching {
+                val message = ChatMessage(
+                    conversationId = conversation.id,
+                    role = MessageRole.USER,
+                    content = modelText,
+                    timestamp = TimeUtil.now(),
+                    kind = MessageKind.RED_PACKET,
+                    payload = RedPacket.toPayload(packet),
+                )
+                val id = db.messages.insert(message)
+                db.conversations.touch(conversation.id, modelText, 1, TimeUtil.now())
+                message.copy(id = id)
+            }.getOrNull() ?: return@launch
+
+            delay(400)
+            _state.update { it.copy(topBarTyping = true) }
+            engine.send(
+                conversationId = conversation.id,
+                personaId = persona.id,
+                text = modelText,
+                existingUserMessageId = saved.id,
+                searchRequested = _state.value.searchEnabled,
             ).collect { handleEvent(it) }
         }
     }
@@ -563,8 +894,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                if (container.settings.current.ttsEnabled && container.settings.current.autoSpeakReplies &&
-                    msg.role == MessageRole.ASSISTANT && msg.content.isNotBlank() && speed == 0
+                // 通话中必须念出来，**不看"启用朗读 / 自动朗读"这两个开关**喵。
+                // 那两个开关是给聊天页的：那里朗读是可选的附加能力；
+                // 而通话页的全部意义就是"用嘴说、用耳朵听"，
+                // 若不念，用户按住说完一句就只会看到屏幕上一行字，通话等于断了喵。
+                val inCall = _state.value.inCall
+                if (msg.role == MessageRole.ASSISTANT && msg.content.isNotBlank() && speed == 0 &&
+                    (inCall || (container.settings.current.ttsEnabled && container.settings.current.autoSpeakReplies))
                 ) {
                     container.speech.speak(msg.content)
                 }
@@ -631,8 +967,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     topBarTyping = typingQueue.isNotEmpty() || current.stream.generating,
                 )
             }
-            // 自动朗读喵
-            if (settings.current.ttsEnabled && settings.current.autoSpeakReplies) {
+            // 自动朗读：通话中无条件念（理由同上面那处），否则看设置喵。
+            if (_state.value.inCall || (settings.current.ttsEnabled && settings.current.autoSpeakReplies)) {
                 container.speech.speak(fullText)
             }
             // 条与条之间额外停顿喵
