@@ -2,8 +2,10 @@ package com.qingyu.app.tts
 
 import android.content.Context
 import android.media.MediaPlayer
+import com.qingyu.app.data.AppSettings
 import com.qingyu.app.data.SettingsStore
 import com.qingyu.app.data.TtsProvider
+import com.qingyu.app.data.effectiveSpeechModel
 import com.qingyu.app.remote.SpeechClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -68,22 +70,35 @@ class SpeechPlayer(
         val bytes = client.synthesize(
             endpoint = settingsStore.speechEndpoint,
             apiKey = settings.speech.apiKey,
-            model = settings.speech.model,
+            model = settings.effectiveSpeechModel(),
             voice = settings.speechVoice,
             format = settings.speechFormat,
             text = text,
             speed = settings.ttsRate,
         )
-        val file = File(cacheDir, "tts_${text.hashCode()}_${settings.speechVoice}.${settings.speechFormat}")
+        val file = cacheFile(text, settings)
         file.writeBytes(bytes)
         return file
+    }
+
+    /**
+     * 音频缓存的文件名喵。
+     *
+     * 用"文本 + 音色 + 模型"三者的哈希，而不是把音色名直接拼进去喵：
+     * 导入的外部音色是一条 URI，里面带 `:` 这类不适合出现在文件名里的字符喵；
+     * 而且同一段文字换了模型就该重新合成，缓存键必须含模型，
+     * 否则换了模型还是会放回旧音色的音频喵。
+     */
+    private fun cacheFile(text: String, settings: AppSettings): File {
+        val voiceKey = "${settings.speechVoice}|${settings.effectiveSpeechModel()}".hashCode()
+        return File(cacheDir, "tts_${text.hashCode()}_$voiceKey.${settings.speechFormat}")
     }
 
     private suspend fun speakWithAi(text: String) {
         _state.value = SpeechState(preparing = true, usingAi = true)
         try {
             val settings = settingsStore.current
-            val cached = File(cacheDir, "tts_${text.hashCode()}_${settings.speechVoice}.${settings.speechFormat}")
+            val cached = cacheFile(text, settings)
             val file = if (cached.exists() && cached.length() > 0) cached else synthesizeToFile(text)
             play(file)
         } catch (t: Throwable) {
