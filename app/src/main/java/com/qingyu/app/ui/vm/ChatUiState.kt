@@ -1,6 +1,7 @@
 package com.qingyu.app.ui.vm
 
 import com.qingyu.app.data.Attachment
+import com.qingyu.app.data.ChatListEntry
 import com.qingyu.app.data.ChatMessage
 import com.qingyu.app.data.Conversation
 import com.qingyu.app.data.Persona
@@ -24,7 +25,8 @@ data class ChatUiState(
     /** 顶栏是否显示「对方正在输入中…」——流式进行中或段间延迟队列非空时点亮喵。 */
     val topBarTyping: Boolean = false,
     val input: String = "",
-    val conversations: List<Conversation> = emptyList(),
+    /** 首页角色列表：一个角色一行，带它的对话预览与时间喵。 */
+    val chatList: List<ChatListEntry> = emptyList(),
     val personas: List<Persona> = emptyList(),
     val banner: String? = null,
     val lastFailedInput: String? = null,
