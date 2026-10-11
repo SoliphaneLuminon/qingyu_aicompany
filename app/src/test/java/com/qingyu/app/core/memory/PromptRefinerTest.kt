@@ -1,5 +1,7 @@
 package com.qingyu.app.core.memory
 
+import com.qingyu.app.data.Persona
+import com.qingyu.app.remote.PromptBuilder
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -136,5 +138,55 @@ class PromptRefinerTest {
         )
         assertEquals(RefineSource.NATIVE, outcome.source)
         assertEquals(RAW, outcome.prompt)
+    }
+
+    @Test
+    fun `润色指令点名保护方括号段落`() {
+        // 只写"不许改事实/人设"时，小模型会把【发送要求】当成排版说明删掉，
+        // 于是"每句话都要用逗号"永远到不了主模型，回复就变成一整段不带标点的话喵。
+        val instruction = PromptRefiner.INSTRUCTION
+        assertTrue("要提到【】段落：$instruction", instruction.contains("【】"))
+        assertTrue("要求逐字保留", instruction.contains("逐字"))
+        assertTrue("要点名发送要求", instruction.contains("发送要求"))
+        assertTrue("要点名表情包", instruction.contains("表情包"))
+    }
+
+    @Test
+    fun `能认出润色结果里的发送要求`() {
+        // 引擎靠这个判断决定"采信润色"还是"退回原生提示词"喵。
+        assertTrue(
+            "留着发送要求就该认出来",
+            PromptBuilder.keepsSendingRules(
+                "# 你是谁\n你是苏婉。\n\n【发送要求——必须遵守】\n句内要用逗号。",
+            ),
+        )
+        assertFalse(
+            "被删掉了就该认不出来，从而退回原生提示词",
+            PromptBuilder.keepsSendingRules("# 你是谁\n你是苏婉，说话自然连贯。"),
+        )
+    }
+
+    @Test
+    fun `原生系统提示词里确实带着发送要求`() {
+        // 上面那条守卫的前提：原生提示词本身必须有这段，否则退回去也是白退喵。
+        val prompt = PromptBuilder.systemPrompt(
+            persona = Persona(id = 1L, name = "小语"),
+            memories = emptyList(),
+            suffix = "",
+            burstReplies = true,
+        )
+        assertTrue("原生提示词该带发送要求", PromptBuilder.keepsSendingRules(prompt))
+        assertTrue("并且明确要求用逗号", prompt.contains("逗号"))
+    }
+
+    @Test
+    fun `关掉拆条时系统提示词里没有发送要求`() {
+        val prompt = PromptBuilder.systemPrompt(
+            persona = Persona(id = 1L, name = "小语"),
+            memories = emptyList(),
+            suffix = "",
+            burstReplies = false,
+        )
+        assertFalse("关掉拆条就不该有这段", PromptBuilder.keepsSendingRules(prompt))
     }
 }
