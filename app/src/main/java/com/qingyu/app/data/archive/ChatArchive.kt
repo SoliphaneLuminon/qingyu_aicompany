@@ -132,17 +132,17 @@ class ChatArchive(private val context: Context, private val db: QingYuDatabase) 
         }
 
         val persona = db.personas.get(resolvedPersonaId) ?: error("角色不存在")
-        val title = parsed.title?.takeIf { it.isNotBlank() }
-            ?: "导入 · ${TimeUtil.smart(TimeUtil.now())}"
 
-        val conversationId = db.conversations.create(resolvedPersonaId, title)
-        val messages = parsed.messages.map { it.copy(conversationId = conversationId) }
+        // 一个角色只有一段对话，所以导入进来的记录直接**并入**那段对话，
+        // 而不是另开一个——另开的话会在库里留下界面永远看不到的孤儿对话喵。
+        val conversation = db.conversations.latestOrCreate(resolvedPersonaId)
+        val messages = parsed.messages.map { it.copy(conversationId = conversation.id) }
         val inserted = db.messages.insertAll(messages)
 
-        db.conversations.refreshSummary(conversationId)
+        db.conversations.refreshSummary(conversation.id)
 
         return ImportResult(
-            conversationId = conversationId,
+            conversationId = conversation.id,
             personaId = resolvedPersonaId,
             personaName = persona.name,
             messageCount = inserted,
