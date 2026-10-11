@@ -1,7 +1,16 @@
 package com.qingyu.app.ui.settings
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -60,6 +69,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -76,6 +88,10 @@ import com.qingyu.app.data.ThemeMode
 import com.qingyu.app.data.TtsProvider
 import com.qingyu.app.data.selectedCustomVoice
 import com.qingyu.app.pet.PetService
+import com.qingyu.app.ui.components.HelpContent
+import com.qingyu.app.ui.components.HelpDot
+import com.qingyu.app.ui.components.LabelWithHelp
+import com.qingyu.app.ui.components.RowLabelWithHelp
 import com.qingyu.app.ui.vm.DataViewModel
 import com.qingyu.app.ui.vm.SettingsViewModel
 import android.provider.Settings as AndroidSettings
@@ -175,7 +191,7 @@ fun SettingsScreen(
                 OutlinedTextField(
                     value = settings.apiBaseUrl,
                     onValueChange = { value -> viewModel.update { it.copy(apiBaseUrl = value) } },
-                    label = { Text("接口地址") },
+                    label = { LabelWithHelp("接口地址", HelpTexts.apiBaseUrl) },
                     placeholder = { Text("https://api.deepseek.com/v1") },
                     supportingText = { Text("OpenAI 兼容端点。填到 /v1 即可，路径会自动补全。") },
                     leadingIcon = { Icon(Icons.Outlined.Cloud, null) },
@@ -186,7 +202,7 @@ fun SettingsScreen(
                 OutlinedTextField(
                     value = settings.apiKey,
                     onValueChange = { value -> viewModel.update { it.copy(apiKey = value) } },
-                    label = { Text("API Key") },
+                    label = { LabelWithHelp("API Key", HelpTexts.apiKey) },
                     placeholder = { Text("sk-…") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -195,7 +211,7 @@ fun SettingsScreen(
                 OutlinedTextField(
                     value = settings.model,
                     onValueChange = { value -> viewModel.update { it.copy(model = value) } },
-                    label = { Text("模型") },
+                    label = { LabelWithHelp("模型", HelpTexts.model) },
                     placeholder = { Text("deepseek-chat") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -255,6 +271,7 @@ fun SettingsScreen(
                     value = settings.temperature.toFloat(),
                     range = 0f..2f,
                     onChange = { value -> viewModel.update { it.copy(temperature = value.toDouble()) } },
+                    help = HelpTexts.temperature,
                 )
                 SliderRow(
                     label = "最大生成长度",
@@ -262,6 +279,7 @@ fun SettingsScreen(
                     value = settings.maxTokens.toFloat(),
                     range = 256f..8192f,
                     onChange = { value -> viewModel.update { it.copy(maxTokens = value.toInt()) } },
+                    help = HelpTexts.maxTokens,
                 )
                 SliderRow(
                     label = "携带历史条数",
@@ -269,12 +287,14 @@ fun SettingsScreen(
                     value = settings.historyLimit.toFloat(),
                     range = 4f..100f,
                     onChange = { value -> viewModel.update { it.copy(historyLimit = value.toInt()) } },
+                    help = HelpTexts.historyLimit,
                 )
                 SwitchRow(
                     label = "拆成多条短消息",
                     description = "模拟真人连发几条，而不是一次一大段",
                     checked = settings.burstReplies,
                     onChange = { value -> viewModel.update { it.copy(burstReplies = value) } },
+                    help = HelpTexts.burstReplies,
                 )
                 SliderRow(
                     label = "打字机速度",
@@ -282,24 +302,27 @@ fun SettingsScreen(
                     value = settings.typingSpeedMs.toFloat(),
                     range = 0f..500f,
                     onChange = { value -> viewModel.update { it.copy(typingSpeedMs = value.toInt()) } },
+                    help = HelpTexts.typingSpeedMs,
                 )
                 SwitchRow(
                     label = "流式输出",
                     description = "边生成边显示",
                     checked = settings.streamResponse,
                     onChange = { value -> viewModel.update { it.copy(streamResponse = value) } },
+                    help = HelpTexts.streamResponse,
                 )
                 SwitchRow(
                     label = "显示思考过程",
                     description = "展示模型的 reasoning 内容",
                     checked = settings.showReasoning,
                     onChange = { value -> viewModel.update { it.copy(showReasoning = value) } },
+                    help = HelpTexts.showReasoning,
                 )
                 Spacer(Modifier.height(6.dp))
                 OutlinedTextField(
                     value = settings.systemPromptSuffix,
                     onValueChange = { value -> viewModel.update { it.copy(systemPromptSuffix = value) } },
-                    label = { Text("附加要求（追加到所有角色的设定后）") },
+                    label = { LabelWithHelp("附加要求（追加到所有角色的设定后）", HelpTexts.systemPromptSuffix) },
                     minLines = 2,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -315,38 +338,44 @@ fun SettingsScreen(
                     description = "按相关度与遗忘曲线挑选记忆带进上下文",
                     checked = settings.injectMemories,
                     onChange = { value -> viewModel.update { it.copy(injectMemories = value) } },
+                    help = HelpTexts.injectMemories,
                 )
                 SwitchRow(
                     label = "遗忘曲线",
                     description = "鲜活度随时间衰减，太久不提就会彻底淡忘",
                     checked = settings.memoryDecayEnabled,
                     onChange = { value -> viewModel.update { it.copy(memoryDecayEnabled = value) } },
+                    help = HelpTexts.memoryDecay,
                 )
                 SwitchRow(
                     label = "概率唤醒",
                     description = "相关记忆按概率浮上来，而不是每次都全说一遍",
                     checked = settings.memoryProbabilityEnabled,
                     onChange = { value -> viewModel.update { it.copy(memoryProbabilityEnabled = value) } },
+                    help = HelpTexts.memoryProbability,
                 )
                 SwitchRow(
                     label = "时空与生物感知",
                     description = "把此刻的时段状态与距上次对话多久注入提示词",
                     checked = settings.memoryTemporalEnabled,
                     onChange = { value -> viewModel.update { it.copy(memoryTemporalEnabled = value) } },
+                    help = HelpTexts.memoryTemporal,
                 )
                 SliderRow(
                     label = "唤醒冷却轮数",
                     valueText = "${settings.memoryCooldownTurns} 轮",
                     value = settings.memoryCooldownTurns.toFloat(),
-                range = 0f..50f,
+                    range = 0f..50f,
                     onChange = { value -> viewModel.update { it.copy(memoryCooldownTurns = value.toInt()) } },
+                    help = HelpTexts.memoryCooldownTurns,
                 )
                 SliderRow(
                     label = "每轮最多注入",
                     valueText = "${settings.memoryInjectLimit} 条",
                     value = settings.memoryInjectLimit.toFloat(),
-                range = 1f..20f,
+                    range = 1f..20f,
                     onChange = { value -> viewModel.update { it.copy(memoryInjectLimit = value.toInt()) } },
+                    help = HelpTexts.memoryInjectLimit,
                 )
                 SliderRow(
                     label = "最低重要度门槛",
@@ -354,12 +383,14 @@ fun SettingsScreen(
                     value = settings.memoryMinImportance.toFloat(),
                     range = 0f..10f,
                     onChange = { value -> viewModel.update { it.copy(memoryMinImportance = value.toInt()) } },
+                    help = HelpTexts.memoryMinImportance,
                 )
                 SwitchRow(
                     label = "Reranker 精排",
                     description = "唤醒后用后台小模型交叉比对，关掉即回退到多因子打分",
                     checked = settings.memoryRerankerEnabled,
                     onChange = { enabled -> viewModel.update { it.copy(memoryRerankerEnabled = enabled) } },
+                    help = HelpTexts.memoryReranker,
                 )
                     }
             }
@@ -373,14 +404,16 @@ fun SettingsScreen(
                     description = "每轮结束后异步整理新记忆，失败静默忽略",
                     checked = settings.autoMemoryExtraction,
                     onChange = { value -> viewModel.update { it.copy(autoMemoryExtraction = value) } },
+                    help = HelpTexts.autoMemoryExtraction,
                 )
                 SwitchRow(
                     label = "Prompt 润色",
                     description = "用小模型顺滑措辞，超过 ${settings.utilityTimeoutMs}ms 自动降级为原生提示词",
                     checked = settings.promptRefineEnabled,
                     onChange = { value -> viewModel.update { it.copy(promptRefineEnabled = value) } },
+                    help = HelpTexts.promptRefine,
                 )
-                Text("服务商", style = MaterialTheme.typography.labelLarge)
+                RowLabelWithHelp(label = "服务商", content = HelpTexts.utilityProvider)
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     UtilityProvider.entries.forEach { provider ->
@@ -396,7 +429,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = settings.utilityBaseUrl,
                         onValueChange = { value -> viewModel.update { it.copy(utilityBaseUrl = value) } },
-                        label = { Text("小模型接口地址") },
+                        label = { LabelWithHelp("小模型接口地址", HelpTexts.utilityBaseUrl) },
                         placeholder = { Text(settings.utilityProvider.defaultBaseUrl) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
@@ -405,7 +438,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = settings.utilityModel,
                         onValueChange = { value -> viewModel.update { it.copy(utilityModel = value) } },
-                        label = { Text("小模型名称") },
+                        label = { LabelWithHelp("小模型名称", HelpTexts.utilityModel) },
                         placeholder = { Text(settings.utilityProvider.defaultModel) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
@@ -415,7 +448,7 @@ fun SettingsScreen(
                         OutlinedTextField(
                             value = settings.utilityApiKey,
                             onValueChange = { value -> viewModel.update { it.copy(utilityApiKey = value) } },
-                            label = { Text("小模型 API Key") },
+                            label = { LabelWithHelp("小模型 API Key", HelpTexts.utilityApiKey) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                         )
@@ -428,7 +461,7 @@ fun SettingsScreen(
                 Icon(Icons.Outlined.Palette, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }) {
                 SettingsCard {
-                Text("主题", style = MaterialTheme.typography.labelLarge)
+                RowLabelWithHelp(label = "主题", content = HelpTexts.themeMode)
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ThemeMode.entries.forEach { mode ->
@@ -455,13 +488,14 @@ fun SettingsScreen(
                     description = "开启后图片直接随对话发出（多模态模型）；关闭则先用下面的识图模型转成文字",
                     checked = settings.visionMainModelSupportsImages,
                     onChange = { value -> viewModel.update { it.copy(visionMainModelSupportsImages = value) } },
+                    help = HelpTexts.visionNative,
                 )
                 if (!settings.visionMainModelSupportsImages) {
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = settings.vision.baseUrl,
                         onValueChange = { value -> viewModel.update { it.copy(vision = it.vision.copy(baseUrl = value)) } },
-                        label = { Text("识图接口地址") },
+                        label = { LabelWithHelp("识图接口地址", HelpTexts.visionBaseUrl) },
                         placeholder = { Text("https://api.siliconflow.cn/v1") },
                         supportingText = { Text("OpenAI 兼容端点，路径自动补 /v1/chat/completions") },
                         singleLine = true,
@@ -471,7 +505,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = settings.vision.apiKey,
                         onValueChange = { value -> viewModel.update { it.copy(vision = it.vision.copy(apiKey = value)) } },
-                        label = { Text("识图 API Key") },
+                        label = { LabelWithHelp("识图 API Key", HelpTexts.visionApiKey) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -479,7 +513,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = settings.vision.model,
                         onValueChange = { value -> viewModel.update { it.copy(vision = it.vision.copy(model = value)) } },
-                        label = { Text("识图模型") },
+                        label = { LabelWithHelp("识图模型", HelpTexts.visionModel) },
                         placeholder = { Text("Qwen/Qwen2.5-VL-32B-Instruct") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
@@ -493,7 +527,7 @@ fun SettingsScreen(
                 Icon(Icons.Outlined.RecordVoiceOver, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }) {
                 SettingsCard {
-                Text("音色来源", style = MaterialTheme.typography.labelLarge)
+                RowLabelWithHelp(label = "音色来源", content = HelpTexts.ttsProvider)
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TtsProvider.entries.forEach { provider ->
@@ -520,7 +554,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = settings.speech.baseUrl,
                         onValueChange = { value -> viewModel.update { it.copy(speech = it.speech.copy(baseUrl = value)) } },
-                        label = { Text("语音接口地址") },
+                        label = { LabelWithHelp("语音接口地址", HelpTexts.speechBaseUrl) },
                         placeholder = { Text("https://api.openai.com/v1") },
                         supportingText = { Text("也支持硅基流动、MiniMax 等 OpenAI 兼容实现") },
                         singleLine = true,
@@ -530,7 +564,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = settings.speech.apiKey,
                         onValueChange = { value -> viewModel.update { it.copy(speech = it.speech.copy(apiKey = value)) } },
-                        label = { Text("语音 API Key") },
+                        label = { LabelWithHelp("语音 API Key", HelpTexts.speechApiKey) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -538,13 +572,13 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = settings.speech.model,
                         onValueChange = { value -> viewModel.update { it.copy(speech = it.speech.copy(model = value)) } },
-                        label = { Text("语音模型") },
+                        label = { LabelWithHelp("语音模型", HelpTexts.speechModel) },
                         placeholder = { Text("tts-1") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(Modifier.height(12.dp))
-                    Text("音色", style = MaterialTheme.typography.labelLarge)
+                    RowLabelWithHelp(label = "音色", content = HelpTexts.speechVoice)
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         PRESET_SPEECH_VOICES.take(6).forEach { voice ->
@@ -560,6 +594,8 @@ fun SettingsScreen(
                     Spacer(Modifier.height(16.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("自定义音色", style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.width(6.dp))
+                        HelpDot(content = HelpTexts.customVoices, size = 15.dp)
                         Spacer(Modifier.weight(1f))
                         TextButton(onClick = { showVoiceImport = true }) { Text("导入音色") }
                     }
@@ -613,11 +649,13 @@ fun SettingsScreen(
                     description = "开启后消息气泡上的朗读按钮才会出声",
                     checked = settings.ttsEnabled,
                     onChange = { value -> viewModel.update { it.copy(ttsEnabled = value) } },
+                    help = HelpTexts.ttsEnabled,
                 )
                 SwitchRow(
                     label = "自动朗读回复",
                     checked = settings.autoSpeakReplies,
                     onChange = { value -> viewModel.update { it.copy(autoSpeakReplies = value) } },
+                    help = HelpTexts.autoSpeakReplies,
                 )
                 SliderRow(
                     label = if (settings.ttsProvider == TtsProvider.OPENAI) "语速（传给语音接口）" else "语速",
@@ -625,6 +663,7 @@ fun SettingsScreen(
                     value = settings.ttsRate,
                     range = 0.5f..2f,
                     onChange = { value -> viewModel.update { it.copy(ttsRate = value) } },
+                    help = HelpTexts.ttsRate,
                 )
                 if (settings.ttsProvider == TtsProvider.SYSTEM) {
                     SliderRow(
@@ -633,6 +672,7 @@ fun SettingsScreen(
                         value = settings.ttsPitch,
                         range = 0.5f..1.8f,
                         onChange = { value -> viewModel.update { it.copy(ttsPitch = value) } },
+                        help = HelpTexts.ttsPitch,
                     )
                 }
                     }
@@ -646,7 +686,7 @@ fun SettingsScreen(
                 }
             }) {
                 SettingsCard {
-                Text("服务商", style = MaterialTheme.typography.labelLarge)
+                RowLabelWithHelp(label = "服务商", content = HelpTexts.searchProvider)
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     SearchProvider.entries.forEach { provider ->
@@ -678,7 +718,7 @@ fun SettingsScreen(
                             }
                         }
                     },
-                    label = { Text("${settings.searchProvider.label} API Key") },
+                    label = { LabelWithHelp("${settings.searchProvider.label} API Key", HelpTexts.searchApiKey) },
                     supportingText = { Text("两家各存一份，切换服务商不用重填") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -687,7 +727,7 @@ fun SettingsScreen(
                 OutlinedTextField(
                     value = settings.searchBaseUrlOverride,
                     onValueChange = { value -> viewModel.update { it.copy(searchBaseUrlOverride = value) } },
-                    label = { Text("自定义地址（可留空）") },
+                    label = { LabelWithHelp("自定义地址（可留空）", HelpTexts.searchBaseUrlOverride) },
                     placeholder = { Text("留给自建网关或代理") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -698,12 +738,14 @@ fun SettingsScreen(
                     value = settings.searchResultCount.toFloat(),
                     range = 1f..10f,
                     onChange = { value -> viewModel.update { it.copy(searchResultCount = value.toInt()) } },
+                    help = HelpTexts.searchResultCount,
                 )
                 SwitchRow(
                     label = "新对话默认开启联网",
                     description = "聊天输入框旁的联网按钮可随时单独切换",
                     checked = settings.searchDefaultOn,
                     onChange = { value -> viewModel.update { it.copy(searchDefaultOn = value) } },
+                    help = HelpTexts.searchDefaultOn,
                 )
                 TestResultLine(text = state.searchTestResult, ok = state.searchTestOk)
                     }
@@ -738,6 +780,7 @@ fun SettingsScreen(
                             PetService.stop(context)
                         }
                     },
+                    help = HelpTexts.petEnabled,
                 )
                 if (!canOverlay && settings.petEnabled) {
                     Text(
@@ -751,6 +794,7 @@ fun SettingsScreen(
                     description = "按设定间隔推送一条消息提醒",
                     checked = settings.proactiveMessages,
                     onChange = { value -> viewModel.update { it.copy(proactiveMessages = value) } },
+                    help = HelpTexts.proactiveMessages,
                 )
                 SliderRow(
                     label = "间隔（分钟）",
@@ -758,6 +802,7 @@ fun SettingsScreen(
                     value = settings.proactiveIntervalMinutes.toFloat(),
                     range = 15f..720f,
                     onChange = { value -> viewModel.update { it.copy(proactiveIntervalMinutes = value.toInt()) } },
+                    help = HelpTexts.proactiveInterval,
                 )
                     }
             }
@@ -819,23 +864,36 @@ fun SettingsScreen(
     }
 }
 
+/**
+ * 设置卡片：一个分组的内容容器喵。
+ *
+ * 间距上做了一件事：外层 6dp、内层 16dp，让卡片之间"松"、卡片内部"紧"喵。
+ * 之前外层 4dp、内层 14dp 时，相邻卡片的间隔和卡片内部的行距看起来差不多，
+ * 扫一眼分不清"这是同一组还是两组"喵。
+ */
 @Composable
 private fun SettingsCard(content: @Composable () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
+            .padding(horizontal = 16.dp, vertical = 6.dp),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
     ) {
-        Column(modifier = Modifier.padding(14.dp)) { content() }
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) { content() }
     }
 }
 
 /**
- * 可折叠的设置分组：点整行切换展开/收起，收起时仍保留 [trailing]（如“测试”按钮喵）。
- * 默认展开状态由 [initialExpanded] 决定，首次进入设置页时生效喵；
+ * 可折叠的设置分组：点整行切换展开/收起，收起时仍保留 [trailing喵]（如"测试"按钮）。
+ *
+ * 展开状态由 [initialExpanded] 决定，首次进入设置页时生效喵；
  * 用户手动切换后由内部 [remember] 状态接管，页面内切走再切回来仍保持喵。
+ *
+ * 箭头用旋转而不是换图标，配合展开动画一起看更连贯喵。
  */
 @Composable
 private fun CollapsibleSettingsSection(
@@ -846,18 +904,35 @@ private fun CollapsibleSettingsSection(
 ) {
     var expanded by remember { mutableStateOf(initialExpanded) }
     val scheme = MaterialTheme.colorScheme
+    val arrowRotation by animateFloatAsState(
+        targetValue = if (expanded) 0f else -90f,
+        animationSpec = spring(dampingRatio = 0.75f, stiffness = 700f),
+        label = "sectionArrow",
+    )
+    // 展开时标题行底色略深，收起时透明：让"哪一段是打开的"一眼可辨喵。
+    val headerTint by animateColorAsState(
+        targetValue = if (expanded) scheme.primary.copy(alpha = 0.06f) else Color.Transparent,
+        animationSpec = tween(durationMillis = 200),
+        label = "sectionHeaderTint",
+    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, end = 20.dp, top = 16.dp, bottom = 4.dp)
-            .clickable { expanded = !expanded },
+            .padding(horizontal = 12.dp)
+            .padding(top = 10.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(headerTint)
+            .clickable { expanded = !expanded }
+            .padding(start = 10.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
-            imageVector = if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-            contentDescription = null,
+            imageVector = Icons.Filled.KeyboardArrowDown,
+            contentDescription = if (expanded) "收起" else "展开",
             tint = scheme.onSurfaceVariant,
-            modifier = Modifier.size(14.dp),
+            modifier = Modifier
+                .size(16.dp)
+                .rotate(arrowRotation),
         )
         Spacer(Modifier.width(8.dp))
         Text(
@@ -868,10 +943,18 @@ private fun CollapsibleSettingsSection(
         )
         trailing?.invoke()
     }
-    AnimatedVisibility(visible = expanded) {
-        Column(modifier = Modifier.animateContentSize()) {
-            content()
-        }
+    AnimatedVisibility(
+        visible = expanded,
+        enter = expandVertically(
+            animationSpec = spring(dampingRatio = 0.8f, stiffness = 500f),
+            expandFrom = Alignment.Top,
+        ) + fadeIn(animationSpec = tween(140)),
+        exit = shrinkVertically(
+            animationSpec = spring(dampingRatio = 0.9f, stiffness = 600f),
+            shrinkTowards = Alignment.Top,
+        ) + fadeOut(animationSpec = tween(90)),
+    ) {
+        Column { content() }
     }
 }
 
@@ -881,6 +964,7 @@ private fun SwitchRow(
     checked: Boolean,
     onChange: (Boolean) -> Unit,
     description: String? = null,
+    help: HelpContent? = null,
 ) {
     Row(
         modifier = Modifier
@@ -889,7 +973,13 @@ private fun SwitchRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = label, style = MaterialTheme.typography.bodyMedium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(text = label, style = MaterialTheme.typography.bodyMedium)
+                if (help != null && !help.isEmpty) {
+                    Spacer(Modifier.width(6.dp))
+                    HelpDot(content = help, size = 15.dp)
+                }
+            }
             if (description != null) {
                 Text(
                     text = description,
@@ -909,20 +999,36 @@ private fun SliderRow(
     value: Float,
     range: ClosedFloatingPointRange<Float>,
     onChange: (Float) -> Unit,
+    help: HelpContent? = null,
+    /** 步进；大于 0 时拖动会吸附到整数刻度，避免"温度 0.73"这种读起来费劲的值喵。 */
+    steps: Int = 0,
 ) {
     Column(modifier = Modifier.padding(vertical = 2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(text = label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            Text(text = label, style = MaterialTheme.typography.bodyMedium)
+            if (help != null && !help.isEmpty) {
+                Spacer(Modifier.width(6.dp))
+                HelpDot(content = help, size = 15.dp)
+            }
+            Spacer(Modifier.weight(1f))
+            // 数值一变就轻微弹一下，让"我改的就是它"更明确喵。
+            val bump = remember { Animatable(1f) }
+            LaunchedEffect(valueText) {
+                bump.snapTo(1.18f)
+                bump.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 650f))
+            }
             Text(
                 text = valueText,
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.scale(bump.value),
             )
         }
         Slider(
             value = value.coerceIn(range.start, range.endInclusive),
             onValueChange = onChange,
             valueRange = range,
+            steps = steps,
         )
     }
 }
@@ -1049,20 +1155,42 @@ private fun VoiceImportDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit
     )
 }
 
+/**
+ * 设置页通用的可选芯片喵。
+ *
+ * 选中/取消用颜色过渡 + 轻微缩放，`animateColorAsState` 让"点中了哪个"更明确喵；
+ * 文字颜色也跟着渐变，避免切换瞬间出现一层灰字压在绿底上喵。
+ */
 @Composable
 private fun SelectableChip(text: String, selected: Boolean, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
+    val container by animateColorAsState(
+        targetValue = if (selected) scheme.primaryContainer else scheme.surfaceContainerHigh,
+        animationSpec = tween(durationMillis = 180),
+        label = "chipContainer",
+    )
+    val content by animateColorAsState(
+        targetValue = if (selected) scheme.onPrimaryContainer else scheme.onSurfaceVariant,
+        animationSpec = tween(durationMillis = 180),
+        label = "chipContent",
+    )
+    val scale by animateFloatAsState(
+        targetValue = if (selected) 1f else 0.96f,
+        animationSpec = spring(dampingRatio = 0.7f, stiffness = 700f),
+        label = "chipScale",
+    )
     Box(
         modifier = Modifier
+            .scale(scale)
             .clip(RoundedCornerShape(50))
-            .background(if (selected) scheme.primaryContainer else scheme.surfaceContainerHigh)
+            .background(container)
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 8.dp),
     ) {
         Text(
             text = text,
             style = MaterialTheme.typography.labelMedium,
-            color = if (selected) scheme.onPrimaryContainer else scheme.onSurfaceVariant,
+            color = content,
         )
     }
 }
