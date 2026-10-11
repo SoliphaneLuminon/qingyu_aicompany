@@ -33,8 +33,13 @@ object Db {
      * v5：重建倒排索引权重喵。
      * - 打分口径改了：单字（「了」「的」「是」）不再计分，只留中文二元组 / 拉丁词 / 数字喵；
      * - 老行的权重是按旧口径归一化的，不重算的话老记忆得分会系统性低于新记忆喵。
+     *
+     * v6：一个角色只剩一个对话喵。
+     * - 界面改成"角色即会话"：进角色就是进它唯一的那段对话，不再有新建对话喵；
+     * - 升级时每个角色只保留最近活动过的那个对话，其余连同消息、附件、
+     *   轮次状态一起删除（取舍见 [collapseConversationsPerPersona] 的说明喵）。
      */
-    const val VERSION = 5
+    const val VERSION = 6
 }
 
 class DbHelper(context: Context) : SQLiteOpenHelper(context.applicationContext, Db.NAME, null, Db.VERSION) {
@@ -72,6 +77,44 @@ class DbHelper(context: Context) : SQLiteOpenHelper(context.applicationContext, 
             // 永远排在新建的记忆后面。backfillMemoryIndex 本身就是"整条删掉重写"，可安全重复执行喵。
             backfillMemoryIndex(db)
         }
+        if (oldVersion < 6) {
+            collapseConversationsPerPersona(db)
+        }
+    }
+
+    /**
+     * v5 -> v6：每个角色只留一个对话喵。
+     *
+     * 界面改成"角色即会话"之后，同一个角色下的旧对话在界面上再也没有入口喵，
+     * 留着只会白占空间、还会让 `latestOrCreate` 每次都要排序挑选喵。
+     * 所以升级时直接收敛：按 `updated_at` 留下最近活动的那一个，其余删掉喵。
+     *
+     * 取舍：**不把多个对话的消息合并成一个**——合并会把不同时期的话题揉在一起，
+     * 时间线错乱、上下文也会互相污染，读起来比丢掉更糟喵。宁可只留最近那段喵。
+     *
+     * 删除顺序有讲究：先从子表（消息 / 附件 / 轮次状态）删，最后删会话本身，
+     * 与 `PersonaStore.delete` 保持同一套清理口径，不留孤儿行喵。
+     */
+    private fun collapseConversationsPerPersona(db: SQLiteDatabase) {
+        val keep = mutableSetOf<Long>()
+        val drop = mutableListOf<Long>()
+        // 按角色分组、组内按最近活动倒序，每组第一条就是要留下的那个喵。
+        db.rawQuery(
+            "SELECT id, persona_id FROM conversations ORDER BY persona_id ASC, updated_at DESC, id DESC",
+            null,
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val id = cursor.getLong(0)
+                val personaId = cursor.getLong(1)
+                if (!keep.add(personaId)) drop += id
+            }
+        }
+        if (drop.isEmpty()) return
+        val ids = drop.joinToString(",")
+        db.execSQL("DELETE FROM messages WHERE conversation_id IN ($ids)")
+        db.execSQL("DELETE FROM attachments WHERE conversation_id IN ($ids)")
+        db.execSQL("DELETE FROM memory_state WHERE conversation_id IN ($ids)")
+        db.execSQL("DELETE FROM conversations WHERE id IN ($ids)")
     }
 
     private fun createPersonas(db: SQLiteDatabase) = db.execSQL(
