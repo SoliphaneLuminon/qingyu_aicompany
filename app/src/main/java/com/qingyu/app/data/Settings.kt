@@ -60,6 +60,15 @@ data class AppSettings(
      * 选中的那个由 [speechVoice] 指认（存的是 URI 喵），直接作为 `voice` 下发喵。
      */
     val customVoices: List<CustomVoice> = emptyList(),
+    /**
+     * 语音转文字（识别）用的模型名喵。
+     *
+     * 与 [speech] 共用同一套接口地址与 Key：OpenAI 兼容网关里
+     * `/audio/speech`（合成）与 `/audio/transcriptions`（识别）本来就是同一族接口，
+     * 再让用户填一遍地址纯属折腾喵。但模型名必须分开——
+     * `tts-1` 是合成模型，拿去识别会被服务端拒掉喵。
+     */
+    val transcribeModel: String = "whisper-1",
     val ttsEnabled: Boolean = false,
     val ttsRate: Float = 1.0f,
     val ttsPitch: Float = 1.0f,
@@ -231,6 +240,7 @@ class SettingsStore(context: Context) {
             speechVoice = prefs.getString(KEY_SPEECH_VOICE, null) ?: defaults.speechVoice,
             speechFormat = prefs.getString(KEY_SPEECH_FORMAT, null) ?: defaults.speechFormat,
             customVoices = decodeVoices(prefs.getString(KEY_CUSTOM_VOICES, null)),
+            transcribeModel = prefs.getString(KEY_TRANSCRIBE_MODEL, null) ?: defaults.transcribeModel,
             ttsEnabled = prefs.getBoolean(KEY_TTS_ENABLED, defaults.ttsEnabled),
             ttsRate = prefs.getFloat(KEY_TTS_RATE, defaults.ttsRate),
             ttsPitch = prefs.getFloat(KEY_TTS_PITCH, defaults.ttsPitch),
@@ -306,6 +316,7 @@ class SettingsStore(context: Context) {
             .putString(KEY_SPEECH_VOICE, settings.speechVoice)
             .putString(KEY_SPEECH_FORMAT, settings.speechFormat)
             .putString(KEY_CUSTOM_VOICES, gson.toJson(settings.customVoices))
+            .putString(KEY_TRANSCRIBE_MODEL, settings.transcribeModel)
             .putBoolean(KEY_TTS_ENABLED, settings.ttsEnabled)
             .putFloat(KEY_TTS_RATE, settings.ttsRate)
             .putFloat(KEY_TTS_PITCH, settings.ttsPitch)
@@ -367,6 +378,7 @@ class SettingsStore(context: Context) {
         const val KEY_SPEECH_VOICE = "speech_voice"
         const val KEY_SPEECH_FORMAT = "speech_format"
         const val KEY_CUSTOM_VOICES = "custom_voices"
+        const val KEY_TRANSCRIBE_MODEL = "transcribe_model"
         const val KEY_SEARCH_PROVIDER = "search_provider"
         const val KEY_SEARCH_KEY_BOCHA = "search_key_bocha"
         const val KEY_SEARCH_KEY_TAVILY = "search_key_tavily"
