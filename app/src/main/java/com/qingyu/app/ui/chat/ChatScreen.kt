@@ -19,8 +19,6 @@ import androidx.compose.material.icons.automirrored.outlined.VolumeOff
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Extension
-import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Public
@@ -70,10 +68,10 @@ fun ChatScreen(
     speaking: Boolean,
     showReasoning: Boolean,
     onBack: () -> Unit,
-    onOpenSettings: () -> Unit,
     onOpenSearch: () -> Unit,
-    onOpenDebug: () -> Unit,
-    onOpenModules: () -> Unit,
+    onOpenChatInfo: () -> Unit,
+    /** 首启引导里那句「去设置」跳到哪；顶栏的「⋯」不再是它喵。 */
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
     /** 软键盘当前占据的高度；0 表示键盘收起喵。 */
     imeBottomInset: Dp = 0.dp,
@@ -190,42 +188,10 @@ fun ChatScreen(
                         IconButton(onClick = onOpenSearch) {
                             Icon(Icons.Outlined.Search, contentDescription = "搜索")
                         }
-                        Box {
-                            IconButton(onClick = { menuOpen = true }) {
-                                Icon(Icons.Outlined.MoreVert, contentDescription = "更多")
-                            }
-                            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                                DropdownMenuItem(
-                                    text = { Text("收藏这段对话") },
-                                    leadingIcon = { Icon(Icons.Outlined.FavoriteBorder, null) },
-                                    onClick = {
-                                        viewModel.favoriteConversation()
-                                        menuOpen = false
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("模块") },
-                                    leadingIcon = { Icon(Icons.Outlined.Extension, null) },
-                                    onClick = {
-                                        onOpenModules()
-                                        menuOpen = false
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("接口与设置") },
-                                    onClick = {
-                                        onOpenSettings()
-                                        menuOpen = false
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("上下文调试") },
-                                    onClick = {
-                                        onOpenDebug()
-                                        menuOpen = false
-                                    },
-                                )
-                            }
+                        // 三个点不再是下拉菜单，而是进入「聊天信息」独立页面喵——
+                        // 菜单项一多就该有独立页面，那里还能顺手放上角色头像与资料入口喵。
+                        IconButton(onClick = onOpenChatInfo) {
+                            Icon(Icons.Outlined.MoreVert, contentDescription = "聊天信息")
                         }
                     },
                 )
