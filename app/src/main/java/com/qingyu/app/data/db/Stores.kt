@@ -198,6 +198,7 @@ class ConversationStore(private val helper: DbHelper) {
         lastMessagePreview = str("last_preview"),
         messageCount = int("message_count"),
         pinned = bool("pinned"),
+        hidden = bool("hidden"),
     )
 
     private suspend fun <T> read(block: (android.database.sqlite.SQLiteDatabase) -> T): T =
@@ -232,6 +233,7 @@ class ConversationStore(private val helper: DbHelper) {
                 put("last_preview", "")
                 put("message_count", 0)
                 put("pinned", 0)
+                put("hidden", 0)
             }
             val id = db.insert("conversations", null, values)
             Conversation(id = id, personaId = personaId, title = title, createdAt = now, updatedAt = now)
@@ -243,12 +245,49 @@ class ConversationStore(private val helper: DbHelper) {
      *
      * 与 [latestOrCreate] 的区别是**不建库**：角色列表只需要展示预览，
      * 为每个角色凭空建一个空对话既浪费又会让"有没有聊过"这个判断失真喵。
+     *
+     * 注意它**不过滤 hidden**：通讯录要能看到被移除的对话，
+     * 否则从通讯录点进角色就会以为"没聊过"、白白丢掉那段历史喵。
      */
     suspend fun of(personaId: Long): Conversation? = read { db ->
         db.rawQuery(
             "SELECT * FROM conversations WHERE persona_id = ? ORDER BY updated_at DESC LIMIT 1",
             arrayOf(personaId.toString()),
         ).useRows { it.toConversation() }.firstOrNull()
+    }
+
+    /** 主界面用：排除已从主界面移除的对话喵。 */
+    suspend fun listVisible(): List<Conversation> = read { db ->
+        db.rawQuery(
+            "SELECT * FROM conversations WHERE hidden = 0 ORDER BY pinned DESC, updated_at DESC",
+            null,
+        ).useRows { it.toConversation() }
+    }
+
+    /**
+     * 把对话从主界面移除 / 放回来喵。
+     *
+     * 只改 `hidden` 一个字段，消息与角色一概不动——这是"移除"而非"删除"喵。
+     */
+    suspend fun setHidden(id: Long, hidden: Boolean) = write { db ->
+        db.update(
+            "conversations",
+            ContentValues().apply { put("hidden", if (hidden) 1 else 0) },
+            "id = ?",
+            arrayOf(id.toString()),
+        )
+        Unit
+    }
+
+    /** 有了新动静就自动放回主界面：发消息、收到主动消息都走这里喵。 */
+    suspend fun unhide(id: Long) = write { db ->
+        db.update(
+            "conversations",
+            ContentValues().apply { put("hidden", 0) },
+            "id = ? AND hidden = 1",
+            arrayOf(id.toString()),
+        )
+        Unit
     }
 
     suspend fun get(id: Long): Conversation? = read { db ->
@@ -438,6 +477,21 @@ class MessageStore(private val helper: DbHelper) {
 
     suspend fun deleteAfter(conversationId: Long, timestamp: Long) = write { db ->
         db.delete("messages", "conversation_id = ? AND timestamp >= ?", arrayOf(conversationId.toString(), timestamp.toString()))
+        Unit
+    }
+
+    /**
+     * 清空一段对话的所有消息喵。
+     *
+     * 附件与消息是分开存的，所以要把该会话的附件一起删掉，
+     * 否则会在库里留下永远读不到的孤儿行喵。轮次状态也一并重置，
+     * 不然清空后冷却与生物感知还记着"聊过多少轮"喵。
+     */
+    suspend fun deleteAll(conversationId: Long) = write { db ->
+        val args = arrayOf(conversationId.toString())
+        db.delete("messages", "conversation_id = ?", args)
+        db.delete("attachments", "conversation_id = ?", args)
+        db.delete("memory_state", "conversation_id = ?", args)
         Unit
     }
 
