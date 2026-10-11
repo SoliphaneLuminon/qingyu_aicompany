@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Pets
@@ -31,12 +32,14 @@ import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -65,9 +68,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qingyu.app.AppContainer
 import com.qingyu.app.core.memory.UtilityProvider
 import com.qingyu.app.data.AppSettings
+import com.qingyu.app.data.CustomVoice
+import com.qingyu.app.data.CustomVoiceParser
+import com.qingyu.app.data.PRESET_SPEECH_VOICES
 import com.qingyu.app.data.SearchProvider
 import com.qingyu.app.data.ThemeMode
 import com.qingyu.app.data.TtsProvider
+import com.qingyu.app.data.selectedCustomVoice
 import com.qingyu.app.pet.PetService
 import com.qingyu.app.ui.vm.DataViewModel
 import com.qingyu.app.ui.vm.SettingsViewModel
@@ -118,6 +125,18 @@ fun SettingsScreen(
             snackbarHostState.showSnackbar(it)
             dataViewModel.clearMessage()
         }
+    }
+
+    // 导入外部音色的弹窗开关喵。
+    var showVoiceImport by remember { mutableStateOf(false) }
+    if (showVoiceImport) {
+        VoiceImportDialog(
+            onDismiss = { showVoiceImport = false },
+            onConfirm = { raw ->
+                showVoiceImport = false
+                viewModel.importCustomVoice(raw)
+            },
+        )
     }
 
     // 填好接口地址和 API Key 后自动拉取可用模型；被清空则收起列表喵。
@@ -528,11 +547,49 @@ fun SettingsScreen(
                     Text("音色", style = MaterialTheme.typography.labelLarge)
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        SPEECH_VOICES.take(6).forEach { voice ->
+                        PRESET_SPEECH_VOICES.take(6).forEach { voice ->
                             SelectableChip(
                                 text = voice,
                                 selected = settings.speechVoice == voice,
                                 onClick = { viewModel.update { it.copy(speechVoice = voice) } },
+                            )
+                        }
+                    }
+
+                    // -------------------------------------------- 自定义音色（外部导入）
+                    Spacer(Modifier.height(16.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("自定义音色", style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.weight(1f))
+                        TextButton(onClick = { showVoiceImport = true }) { Text("导入音色") }
+                    }
+                    if (settings.customVoices.isEmpty()) {
+                        Text(
+                            text = "音色克隆服务会给你一段「音色名称 / URI / 模型 / 参考文本」，" +
+                                "整段粘进来就能用；不同服务商的音色靠 URI 区分。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        settings.customVoices.forEach { voice ->
+                            CustomVoiceRow(
+                                voice = voice,
+                                selected = settings.speechVoice == voice.uri,
+                                onSelect = {
+                                    viewModel.update {
+                                        it.copy(speechVoice = voice.uri, ttsProvider = TtsProvider.OPENAI)
+                                    }
+                                },
+                                onDelete = { viewModel.removeCustomVoice(voice.uri) },
+                            )
+                            Spacer(Modifier.height(6.dp))
+                        }
+                        val active = settings.selectedCustomVoice()
+                        if (active != null && active.hasModel) {
+                            Text(
+                                text = "当前音色自带模型：合成时用 ${active.model}，不用上面的语音模型。",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
@@ -882,8 +939,115 @@ private fun TestResultLine(text: String?, ok: Boolean) {
     )
 }
 
-/** OpenAI 兼容语音接口的常用音色喵。 */
-private val SPEECH_VOICES = listOf("alloy", "echo", "fable", "onyx", "nova", "shimmer", "coral", "verse")
+/** OpenAI 兼容语音接口的常用音色见 [PRESET_SPEECH_VOICES]喵。 */
+
+/**
+ * 一个导入进来的外部音色：点一下选中，右边的垃圾桶删掉喵。
+ *
+ * 副标题优先显示该音色自带的模型，没有才显示"跟随语音模型"——
+ * 用户最需要核对的就是"这条音色到底会走哪个模型"喵。
+ */
+@Composable
+private fun CustomVoiceRow(
+    voice: CustomVoice,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) scheme.primaryContainer else scheme.surfaceContainerHigh)
+            .clickable(onClick = onSelect)
+            .padding(start = 14.dp, end = 2.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = voice.name,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (selected) scheme.onPrimaryContainer else scheme.onSurface,
+            )
+            Text(
+                text = voice.model.ifBlank { "跟随语音模型" },
+                style = MaterialTheme.typography.labelSmall,
+                color = if (selected) scheme.onPrimaryContainer else scheme.onSurfaceVariant,
+            )
+        }
+        if (selected) {
+            Text(
+                text = "使用中",
+                style = MaterialTheme.typography.labelSmall,
+                color = scheme.onPrimaryContainer,
+            )
+        }
+        IconButton(onClick = onDelete) {
+            Icon(Icons.Outlined.Delete, contentDescription = "删除音色", tint = scheme.onSurfaceVariant)
+        }
+    }
+}
+
+/**
+ * 导入外部音色：整段粘贴，解析交给 [CustomVoiceParser]喵。
+ *
+ * 不做成四个输入框，是因为服务商那边本来就是"一整块信息"给你复制喵；
+ * 让用户手动拆成四个字段既啰嗦、又容易漏掉模型那一行喵。
+ */
+@Composable
+private fun VoiceImportDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    var raw by remember { mutableStateOf("") }
+    val preview = remember(raw) { CustomVoiceParser.parse(raw) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("导入外部音色") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = raw,
+                    onValueChange = { raw = it },
+                    label = { Text("粘贴音色信息") },
+                    placeholder = {
+                        Text(
+                            "音色名称: wansu\n" +
+                                "URI: speech:wansu:xxxx:yyyy\n" +
+                                "模型: FunAudioLLM/CosyVoice2-0.5B\n" +
+                                "参考文本: 我哪有你说的那么好啊",
+                        )
+                    },
+                    minLines = 5,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = when {
+                        raw.isBlank() -> "只给一条音色 URI 也能导入，名称会自动从 URI 里取。"
+                        preview == null -> "还没找到音色标识，检查一下是否粘贴完整。"
+                        else -> buildString {
+                            append("将导入：")
+                            append(preview.name)
+                            if (preview.hasModel) {
+                                append(" · ")
+                                append(preview.model)
+                            }
+                        }
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (raw.isNotBlank() && preview == null) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onConfirm(raw) }, enabled = preview != null) { Text("导入") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
 
 @Composable
 private fun SelectableChip(text: String, selected: Boolean, onClick: () -> Unit) {
