@@ -592,10 +592,22 @@ class ChatEngine(
      */
     suspend fun fetchModels(): kotlin.Result<List<String>> {
         val settings = settingsStore.current
-        val endpoint = Endpoints.models(settings.apiBaseUrl)
+        return fetchModels(settings.apiBaseUrl, settings.apiKey)
+    }
+
+    /**
+     * 按任意一组地址与 key 拉模型列表喵。
+     *
+     * 识图、语音、小模型这些能力各自可能有独立的服务商，所以不能只认主连接那一组喵；
+     * 只要它是 OpenAI 兼容端点，`GET /models` 就是通用的喵。
+     *
+     * **key 允许为空**：本地 Ollama 这类不需要鉴权的端点也要能列模型，
+     * 客户端那边在没有 key 时本就不发 Authorization 头喵。
+     */
+    suspend fun fetchModels(baseUrl: String, apiKey: String): kotlin.Result<List<String>> {
+        val endpoint = Endpoints.models(baseUrl)
         if (endpoint.isBlank()) return kotlin.Result.failure(IllegalStateException("还没有配置接口地址"))
-        if (settings.apiKey.isBlank()) return kotlin.Result.failure(IllegalStateException("还没有填写 API Key"))
-        return runCatching { client.listModels(endpoint, settings.apiKey) }
+        return runCatching { client.listModels(endpoint, apiKey) }
     }
 
     /** 让模型基于最近对话自动整理出长期记忆喵。 */
