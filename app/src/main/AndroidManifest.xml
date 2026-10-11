@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- 回复期间的前台服务走 dataSync 类型：它就是"替用户把一次网络请求跑完"喵。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- 按住说话与语音通话都要录麦克风；在用户真正按住时才申请喵。 -->
@@ -30,6 +32,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.QingYu">
             <intent-filter>
@@ -46,6 +49,18 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="desktop_pet_overlay" />
         </service>
+
+        <!--
+          回复期间的前台服务喵。
+
+          stopWithTask="false" 是关键：用户从最近任务里划掉应用时，
+          服务默认会跟着停，那样回复就断了。这里明确要求它留下来把回复跑完喵。
+        -->
+        <service
+            android:name=".notify.ReplyService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="dataSync" />
 
         <receiver
             android:name=".pet.BootReceiver"
