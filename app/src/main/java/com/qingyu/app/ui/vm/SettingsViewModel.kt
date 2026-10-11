@@ -6,6 +6,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.qingyu.app.AppContainer
+import com.qingyu.app.core.memory.UtilityProvider
+import com.qingyu.app.data.ApiConfig
 import com.qingyu.app.data.AppSettings
 import com.qingyu.app.data.CustomVoiceParser
 import com.qingyu.app.data.DEFAULT_SPEECH_VOICE
@@ -56,7 +58,42 @@ data class SettingsUiState(
     val modelsError: String? = null,
     /** 已为哪一组 (接口地址, API Key) 拉取过，避免同样的连接反复请求喵。 */
     val modelsFetchedForKey: String = "",
+    /**
+     * 各个"外部能力"各自的可用模型列表喵。
+     *
+     * 键是 [ModelSlot] 的名字（vision / speech / transcribe），值是拉到的模型 id喵。
+     * 主对话那一路仍用 [modelList]（它是设置页最上面、用得最多的那个）喵。
+     */
+    val slotModels: Map<String, List<String>> = emptyMap(),
+    /** 各能力正在拉取的状态喵。 */
+    val slotFetching: Set<String> = emptySet(),
+    /** 各能力拉取失败的提示喵。 */
+    val slotErrors: Map<String, String> = emptyMap(),
+    /** 各能力已成功拉取过的 (地址｜Key)，避免重复请求喵。 */
+    val slotFetchedFor: Map<String, String> = emptyMap(),
 )
+
+/**
+ * 需要"填好地址与 Key 就自动列出模型"的配置位喵。
+ *
+ * 用枚举而不是散落的字符串键，是为了让"哪些地方需要模型选择"这件事
+ * 只有一个真源——将来再加一类能力，编译器会提醒把每个 when 补全喵。
+ */
+enum class ModelSlot {
+    /** 识图模型喵。 */
+    VISION,
+
+    /** 语音合成模型喵。 */
+    SPEECH,
+
+    /** 语音识别模型喵。 */
+    TRANSCRIBE,
+
+    /** 小模型（润色 / 记忆提炼 / 识图描述这类辅助任务）喵。 */
+    UTILITY;
+
+    val key: String get() = name.lowercase()
+}
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -131,6 +168,83 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun modelsKey(s: AppSettings): String = "${s.apiBaseUrl.trim()}｜${s.apiKey.trim()}"
+
+    // ------------------------------------------------------------ 各能力的模型列表
+
+    /**
+     * 按配置位拉取可用模型喵。
+     *
+     * 三类能力各有独立的服务商，所以各拉各的、各存各的，互不干扰喵。
+     * 地址或 Key 一被改空就立刻收起列表，免得旧服务商的模型名留在屏幕上误导人喵。
+     *
+     * @param auto 由界面在填完地址与 Key 后自动触发；这组连接已经成功拉过就不重复请求喵
+     */
+    fun fetchSlotModels(slot: ModelSlot, auto: Boolean = false) {
+        val config = slotConfig(slot)
+        val baseUrl = config.baseUrl.trim()
+        val apiKey = config.apiKey.trim()
+
+        // 本地 Ollama 不需要 key，所以"必须有 key"这条只对需要鉴权的服务商成立喵。
+        val keyRequired = slot != ModelSlot.UTILITY ||
+            container.settings.current.utilityProvider.requiresKey
+
+        if (baseUrl.isBlank() || (keyRequired && apiKey.isBlank())) {
+            _state.update {
+                it.copy(
+                    slotModels = it.slotModels - slot.key,
+                    slotErrors = it.slotErrors - slot.key,
+                    slotFetchedFor = it.slotFetchedFor - slot.key,
+                )
+            }
+            return
+        }
+        val key = "$baseUrl｜$apiKey"
+        val current = _state.value
+        if (auto && current.slotFetchedFor[slot.key] == key && current.slotModels[slot.key]?.isNotEmpty() == true) return
+        if (slot.key in current.slotFetching) return
+
+        viewModelScope.launch {
+            _state.update {
+                it.copy(slotFetching = it.slotFetching + slot.key, slotErrors = it.slotErrors - slot.key)
+            }
+            val result = withContext(Dispatchers.IO) { container.chatEngine.fetchModels(baseUrl, apiKey) }
+            _state.update {
+                it.copy(
+                    slotFetching = it.slotFetching - slot.key,
+                    slotModels = it.slotModels + (slot.key to result.getOrDefault(emptyList())),
+                    slotErrors = result.exceptionOrNull()?.message
+                        ?.let { message -> it.slotErrors + (slot.key to message) }
+                        ?: (it.slotErrors - slot.key),
+                    slotFetchedFor = it.slotFetchedFor + (slot.key to key),
+                )
+            }
+        }
+    }
+
+    /** 取出某个配置位当前的地址与 Key喵。 */
+    private fun slotConfig(slot: ModelSlot): ApiConfig {
+        val s = container.settings.current
+        return when (slot) {
+            // 语音合成与识别共用同一组地址与 Key（同一族接口），所以两者取的是同一份喵。
+            ModelSlot.VISION -> s.vision
+            ModelSlot.SPEECH, ModelSlot.TRANSCRIBE -> s.speech
+            // 小模型有两层回退，必须跟运行时保持一致，否则会拿一个错的地址去拉模型喵：
+            // 选了「跟随主模型」就用主连接的地址与 Key；否则地址留空时退回该服务商的默认地址喵。
+            ModelSlot.UTILITY -> when (s.utilityProvider) {
+                UtilityProvider.MAIN -> ApiConfig(
+                    baseUrl = s.apiBaseUrl,
+                    apiKey = s.apiKey,
+                    model = s.utilityModel,
+                )
+
+                else -> ApiConfig(
+                    baseUrl = s.utilityBaseUrl.ifBlank { s.utilityProvider.defaultBaseUrl },
+                    apiKey = s.utilityApiKey,
+                    model = s.utilityModel,
+                )
+            }
+        }
+    }
 
     fun clearToast() = _state.update { it.copy(toast = null) }
 
