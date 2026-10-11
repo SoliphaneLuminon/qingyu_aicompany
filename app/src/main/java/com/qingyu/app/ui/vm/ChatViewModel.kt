@@ -16,6 +16,7 @@ import com.qingyu.app.data.RedPacket
 import com.qingyu.app.data.Sticker
 import com.qingyu.app.data.repo.ChatEvent
 import com.qingyu.app.data.repo.ChatStreamState
+import com.qingyu.app.data.repo.ReplyGate
 import com.qingyu.app.data.repo.SendBatchTracker
 import com.qingyu.app.media.StickerImporter
 import com.qingyu.app.core.TimeUtil
@@ -56,6 +57,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 当前这个合并窗口的计时协程喵。 */
     private var windowJob: Job? = null
+
+    /** 输入框此刻是否开着（由界面回报）喵。 */
+    private var inputFocused: Boolean = false
+
+    /** 这一批消息发出之后，输入框被点开的时刻；没点开过就是 null喵。 */
+    private var inputOpenedAt: Long? = null
 
     /**
      * 发送流水线的串行锁喵。
@@ -404,15 +411,44 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * 全都走这里，行为一致喵。
      */
     private fun onMessageQueued() {
-        val opened = batchTracker.onSent(TimeUtil.now())
+        val sentAt = TimeUtil.now()
+        val opened = batchTracker.onSent(sentAt)
         // 已有窗口开着：这条并进当前批次，等原来那个计时器到点即可喵。
         if (!opened) return
 
+        // 这一批的"输入框点开时刻"从零开始算，免得上一批的残留把这一批也推迟喵。
+        inputOpenedAt = null
+
         windowJob?.cancel()
         windowJob = viewModelScope.launch {
-            delay(SendBatchTracker.WINDOW_MS)
+            // 发完先等基础窗口（合并连发的消息）；若用户在这期间又点开了输入框，
+            // 就再等他到"点开之后 5 秒"——他正打着字时抢答会把他要说的话打断喵。
+            //
+            // 分段醒来而不是一口气睡到截止时刻：输入框中途被关掉时
+            // ReplyGate 会立刻放行，那就不该继续睡喵。
+            while (true) {
+                val now = TimeUtil.now()
+                if (ReplyGate.isReady(now, sentAt, inputOpenedAt, inputFocused)) break
+                val wait = ReplyGate.nextCheckDelayMs(now, sentAt, inputOpenedAt, inputFocused)
+                if (wait <= 0L) break
+                delay(wait)
+            }
             batchTracker.onWindowClosed()
             drainBatches()
+        }
+    }
+
+    /**
+     * 输入框开合状态由界面回报喵。
+     *
+     * 只记"这一批发出之后"的重新点开时刻喵：发送前就一直开着的输入框不该推迟回复，
+     * 那会让每条消息都白等 5 秒喵。
+     */
+    fun onInputFocusChanged(focused: Boolean) {
+        val wasFocused = inputFocused
+        inputFocused = focused
+        if (focused && !wasFocused && batchTracker.hasOpenWindow) {
+            inputOpenedAt = TimeUtil.now()
         }
     }
 
@@ -880,7 +916,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val msg = event.message
                 val speed = container.settings.current.typingSpeedMs
 
-                if (msg.role == MessageRole.ASSISTANT && msg.content.isNotBlank() && speed > 0) {
+                // 表情包**不走打字机**喵。它的 content 是表情名（"开心"这种），
+                // 交给打字机就会被一个字一个字地打成那两个字，而不是显示成图片喵。
+                // 而且真人发表情包本来就是"啪"一下就过去了，没有逐字打的道理喵。
+                val isSticker = msg.kind == MessageKind.STICKER
+
+                if (msg.role == MessageRole.ASSISTANT && msg.content.isNotBlank() && !isSticker && speed > 0) {
                     // 打字机模式：完整拆分气泡入队，由 processTypingQueue 负责逐字渲染上屏喵
                     typingQueue.add(msg)
 
@@ -924,8 +965,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 // 那两个开关是给聊天页的：那里朗读是可选的附加能力；
                 // 而通话页的全部意义就是"用嘴说、用耳朵听"，
                 // 若不念，用户按住说完一句就只会看到屏幕上一行字，通话等于断了喵。
+                //
+                // 表情包不念喵：它的 content 是表情名，念出来就是干巴巴的两个字
+                // （"开心"），既不像是人在说话，也不是这张图想表达的东西喵。
                 val inCall = _state.value.inCall
-                if (msg.role == MessageRole.ASSISTANT && msg.content.isNotBlank() && speed == 0 &&
+                if (msg.role == MessageRole.ASSISTANT && msg.content.isNotBlank() && !isSticker && speed == 0 &&
                     (inCall || (container.settings.current.ttsEnabled && container.settings.current.autoSpeakReplies))
                 ) {
                     container.speech.speak(msg.content)
