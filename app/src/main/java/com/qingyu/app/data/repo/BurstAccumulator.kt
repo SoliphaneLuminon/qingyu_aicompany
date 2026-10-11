@@ -102,11 +102,18 @@ class BurstAccumulator(
          *
          * 断开处的标点是**有意丢弃**的，不是漏加：真人用手机连发时几乎不会给每条都补句号喵，
          * 留着反而像在念稿子。只有"攒着不拆"的短应答才会把标点带进下一段喵。
+         *
+         * 标点集合刻意收得比"书面标点"宽喵：早期只有 `，。！？；`，
+         * 而聊天里真正常见的停顿还包括顿号、冒号、省略号、波浪号与破折号——
+         * 模型只用了这些时，旧集合一个都匹配不到，整段话就会原样变成一条长消息喵。
+         *
+         * 一条标点都没有时交给 [PromptBuilder.splitLongRun] 兜底喵，
+         * 否则"模型不写逗号"就等于"永远不拆"——那正是用户反复反馈的那个问题喵。
          */
         fun splitByCommaAndPunctuation(text: String, minLength: Int = MIN_SEGMENT_LENGTH): List<String> {
             if (text.isBlank()) return emptyList()
 
-            val delimiters = Regex("([，,。！？!?；;\n]+)")
+            val delimiters = Regex("([，,。！？!?；;、：:…~～—–·\n]+)")
             val result = mutableListOf<String>()
             var currentBuffer = StringBuilder()
 
@@ -122,11 +129,14 @@ class BurstAccumulator(
 
                 currentBuffer.append(part)
 
-                val hasNewline = punc.contains("\n")
                 val currentText = currentBuffer.toString().trim()
+                // 强停顿（句号、问号、叹号、省略号、换行）**出现就断**喵：
+                // 哪怕前面只有"我想想"三个字，"我想想…算了还是去吧"也该是两条，
+                // 而不是因为前缀短就硬把两句粘在一起喵。
+                val isStrong = punc.any { it in STRONG_PAUSES }
 
-                // 遇到换行，或累积字数已超过阈值：断开成一条独立消息，标点就此丢弃喵。
-                if (hasNewline || currentText.length > minLength) {
+                // 强停顿一律断；弱停顿（逗号、顿号、波浪号…）要攒够字数才断，避免碎片化喵。
+                if (isStrong || currentText.length > minLength) {
                     if (currentText.isNotEmpty()) {
                         result.add(currentText)
                     }
@@ -149,7 +159,18 @@ class BurstAccumulator(
                 result.add(remaining)
             }
 
-            return if (result.isNotEmpty()) result else listOf(text)
+            val pieces = if (result.isNotEmpty()) result else listOf(text)
+            // 兜底再过一道长句切分：没有任何标点的长句只有这一道能救喵。
+            return pieces.flatMap { PromptBuilder.splitLongRun(it) }
         }
+
+        /**
+         * 强停顿符喵：出现就断，不受 [MIN_SEGMENT_LENGTH] 约束。
+         *
+         * 逗号、顿号、波浪号这些是**弱**停顿——它们太密，一遇就断会把话切碎喵。
+         * 而句号、叹号、省略号在聊天里基本就等于"这一条说完了"，
+         * 前面哪怕只有两三个字也该收尾喵。
+         */
+        private val STRONG_PAUSES = setOf('\n', '。', '！', '？', '!', '?', '…')
     }
 }
