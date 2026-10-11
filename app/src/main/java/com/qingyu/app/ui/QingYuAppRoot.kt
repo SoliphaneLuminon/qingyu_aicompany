@@ -3,6 +3,8 @@ package com.qingyu.app.ui
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import android.os.Build
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutLinearInEasing
@@ -165,7 +167,10 @@ private fun ScreenEnter(content: @Composable () -> Unit) {
  * 用状态表达比维护 nav graph 更省心喵。
  */
 @Composable
-fun QingYuAppRoot(container: AppContainer) {
+fun QingYuAppRoot(
+    container: AppContainer,
+    pendingPersonaId: kotlinx.coroutines.flow.MutableStateFlow<Long?> = kotlinx.coroutines.flow.MutableStateFlow(null),
+) {
     val application = LocalContext.current.applicationContext as android.app.Application
     val chatViewModel: ChatViewModel = viewModel(factory = ChatViewModel.factory(application))
     val shellViewModel: ShellViewModel = viewModel(factory = ShellViewModel.factory(application))
@@ -212,6 +217,40 @@ fun QingYuAppRoot(container: AppContainer) {
         contract = ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (granted) chatViewModel.startRecording() else chatViewModel.showBanner("没有麦克风权限")
+    }
+
+    // 通知权限（Android 13+）喵。
+    //
+    // 没有它，"退出应用也要收到回复"就只剩库里有记录、用户却毫不知情喵。
+    // 启动时就问一次；拒绝了也不反复纠缠——发送流程本身不受影响喵。
+    val notificationPermission = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (!granted) chatViewModel.showBanner("没有通知权限，退出后收不到回复提醒")
+    }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                application,
+                android.Manifest.permission.POST_NOTIFICATIONS,
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (!granted) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    // 从通知点进来：直接进那个角色的对话喵。
+    //
+    // 只在角色确实还在时才进，并把待办清空——否则一次点击会在每次重组时反复触发喵。
+    val pendingPersona by pendingPersonaId.collectAsStateWithLifecycle()
+    LaunchedEffect(pendingPersona, chatState.allPersonas) {
+        val id = pendingPersona ?: return@LaunchedEffect
+        val persona = chatState.allPersonas.firstOrNull { it.id == id }
+        if (persona != null) {
+            pendingPersonaId.value = null
+            tab = HomeTab.HOME
+            shellViewModel.backToTabs()
+            chatViewModel.openPersona(persona)
+        }
     }
 
     // 通话页回显"上一句听成了什么"：识别错了要看得见，
