@@ -33,6 +33,7 @@ class ChatListBuilderTest {
         messageCount: Int = 4,
         preview: String = "",
         hidden: Boolean = false,
+        pinned: Boolean = false,
     ) = Conversation(
         id = id,
         personaId = personaId,
@@ -42,6 +43,7 @@ class ChatListBuilderTest {
         lastMessagePreview = preview,
         messageCount = messageCount,
         hidden = hidden,
+        pinned = pinned,
     )
 
     @Test
@@ -140,5 +142,70 @@ class ChatListBuilderTest {
     @Test
     fun `空列表不报错`() {
         assertTrue(buildChatList(emptyList(), emptyList()).isEmpty())
+    }
+
+    // ---------------------------------------------------------------- 置顶
+
+    @Test
+    fun `置顶的排在所有普通对话之前`() {
+        // 即使置顶那条很久没说话，也要压在最新说话的普通对话上面喵。
+        val list = buildChatList(
+            personas = listOf(persona(1, "很久没聊的"), persona(2, "刚聊过的")),
+            conversations = listOf(
+                conversation(10, 1, updatedAt = 100L, pinned = true),
+                conversation(20, 2, updatedAt = 9_000L),
+            ),
+        )
+        assertEquals(listOf("很久没聊的", "刚聊过的"), list.map { it.persona.name })
+    }
+
+    @Test
+    fun `置顶组内仍按最近说过排序`() {
+        val list = buildChatList(
+            personas = listOf(persona(1, "甲"), persona(2, "乙"), persona(3, "丙")),
+            conversations = listOf(
+                conversation(10, 1, updatedAt = 100L, pinned = true),
+                conversation(20, 2, updatedAt = 300L, pinned = true),
+                conversation(30, 3, updatedAt = 500L),
+            ),
+        )
+        // 两条置顶内部：乙(300) 在 甲(100) 之前；普通的丙排在最后喵。
+        assertEquals(listOf("乙", "甲", "丙"), list.map { it.persona.name })
+    }
+
+    @Test
+    fun `取消置顶后回到普通组的正确位置`() {
+        val personas = listOf(persona(1, "甲"), persona(2, "乙"))
+        val pinnedList = buildChatList(
+            personas = personas,
+            conversations = listOf(
+                conversation(10, 1, updatedAt = 100L, pinned = true),
+                conversation(20, 2, updatedAt = 9_000L),
+            ),
+        )
+        assertEquals(listOf("甲", "乙"), pinnedList.map { it.persona.name })
+
+        // 取消置顶之后，它该按活动时间落回乙的后面喵。
+        val unpinnedList = buildChatList(
+            personas = personas,
+            conversations = listOf(
+                conversation(10, 1, updatedAt = 100L, pinned = false),
+                conversation(20, 2, updatedAt = 9_000L),
+            ),
+        )
+        assertEquals(listOf("乙", "甲"), unpinnedList.map { it.persona.name })
+    }
+
+    @Test
+    fun `被移除的置顶对话照样不出现在主界面`() {
+        // 隐藏优先于置顶：移除过的对话不该因为被置顶而重新冒出来喵。
+        val list = buildChatList(
+            personas = listOf(persona(1, "甲"), persona(2, "乙")),
+            conversations = listOf(
+                conversation(10, 1, updatedAt = 9_000L, hidden = true, pinned = true),
+                conversation(20, 2, updatedAt = 100L),
+            ),
+        )
+        assertEquals(listOf("乙"), list.map { it.persona.name })
     }
 }
