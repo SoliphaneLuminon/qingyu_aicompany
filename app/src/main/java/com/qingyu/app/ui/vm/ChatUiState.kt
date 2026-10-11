@@ -69,9 +69,19 @@ data class ChatUiState(
     /** 红包编辑弹窗是否打开喵。 */
     val redPacketOpen: Boolean = false,
 ) {
+    /**
+     * 现在能不能发送喵。
+     *
+     * **刻意不看 `stream.generating`** 喵：发消息这件事与后端彻底解绑，
+     * 模型正在回答时用户照样可以继续发，那些消息会并进同一个合并窗口，
+     * 或排在当前这一轮之后喵。以前这里挡着生成状态，用户想补一句
+     * 就只能等它说完——那正是"连发多条会出问题"的来源之一喵。
+     *
+     * 仍然挡的是 [importingImage]：图片还在落盘、附件还没就绪，
+     * 这时发出去会是一条没有图的空消息喵。
+     */
     val canSend: Boolean
         get() = (input.isNotBlank() || pendingAttachments.isNotEmpty()) &&
-            !stream.generating &&
             !importingImage &&
             persona != null
 
