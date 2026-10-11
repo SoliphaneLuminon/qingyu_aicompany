@@ -34,7 +34,7 @@
 | --- | --- | --- |
 | **聊天** | OpenAI 兼容接口（DeepSeek / Ollama / LM Studio / 各类中转都行），SSE 流式 | 思考过程单独展示并折叠；一次输出按空行拆成多条短消息；可重试 / 重新生成 / 删除 / 复制 / 朗读 |
 | **图片与识图** | 输入框选图发送，可多张 | 主模型多模态则图片直接随对话发出（最多 3 张）；否则用专用识图模型转成描述；同一张图只识别一次；EXIF 转正、长边 2048 存盘、发送前压到 1280 |
-| **语音** | AI 合成（OpenAI 兼容 `/v1/audio/speech`）或系统 TTS 可切换 | 失败自动回退系统语音；按文本哈希缓存，重复朗读不再付费；音色与语速可调 |
+| **语音** | AI 合成（OpenAI 兼容 `/v1/audio/speech`）或系统 TTS 可切换 | 失败自动回退系统语音；按文本哈希缓存，重复朗读不再付费；支持**导入外部音色**——音色克隆服务给的「名称 / URI / 模型 / 参考文本」整段粘贴即可，合成时自动使用该音色自带的模型 |
 | **联网搜索** | 博查 Bocha（中文）/ Tavily（英文研究向）可切换，每条消息单独开关 | 搜到的资料以"编号 + 标题 + 链接 + 摘要"注入系统提示词，并明确约束为外部内容；来源随消息落库 |
 | **收藏空间** | 收藏任意消息 / 整段对话 / 随手记 | 带角色名、会话标题、标签；分类筛选 + 关键词搜索 + 单条或整包导出 |
 | **记忆** | 五类长期记忆（基本资料 / 喜好 / 经历 / 关系 / 约定） | 带 1–10 重要度与启用开关；启用的以"你记得的事"注入系统提示词；可让模型自动整理 |
@@ -102,7 +102,7 @@ $env:JAVA_HOME = '<你的 JDK 路径>'
 $env:ANDROID_HOME = '<你的 Android SDK 路径>'
 
 .\gradlew.bat :app:assembleDebug          # 调试包，不需要签名
-.\gradlew.bat :app:testDebugUnitTest      # 验证：应输出 207 全部通过
+.\gradlew.bat :app:testDebugUnitTest      # 验证：应输出 273 全部通过
 ```
 
 | 产物 | 包名 | 说明 |
@@ -138,7 +138,27 @@ debug 包与正式包（`com.qingyu.app`）包名不同，可以共存。
 
 3. **开始聊天**：回到聊天页，选你创建的角色，发消息。
 
-#### 5. 签名（正式发布才需要）
+#### 5. 使用自定义音色（音色克隆）
+
+轻语内置的是 OpenAI 那套预设音色。若想用**自己克隆的音色**，在设置页
+「语音 → 音色来源选 AI 语音 → 自定义音色 → 导入音色」，把音色克隆服务给你的那一整段
+信息直接粘进去即可（以 [SiliconFlow](https://docs.siliconflow.com/cn/api-reference/audio/upload-voice)
+的 CosyVoice2 为例）：
+
+```
+音色名称: wansu
+URI: speech:wansu:daojl2tsssvc739t29kg:dndkmulxmkworqocghrx
+模型: FunAudioLLM/CosyVoice2-0.5B
+参考文本: 我哪有你说的那么好啊
+```
+
+- **只有一条 URI 也能导入**，名称会自动从 URI 里取（`speech:wansu:…` → `wansu`）。
+- 可同时保存多个音色，点一下即切换，右边的垃圾桶删除。
+- **模型跟着音色走**：导入的音色会记住自己配套的模型，合成时自动使用它，
+  而不是设置页里那个全局语音模型——音色是绑在模型上的，换模型多半就合成不出来了。
+- 前提是「语音接口地址 / API Key」已填好，且该服务商支持音色克隆。
+
+#### 6. 签名（正式发布才需要）
 
 若要构建可上架的正式包：
 
@@ -164,7 +184,7 @@ keyPassword=<你的口令>
 
 ## 四、测试覆盖
 
-**16 个测试类 / 207 个用例**，全部是纯 JVM 测试（不需要模拟器）。
+**20 个测试类 / 273 个用例**，全部是纯 JVM 测试（不需要模拟器）。
 跑 `.\gradlew.bat :app:testDebugUnitTest` 可复现。
 
 | 测试类 | 覆盖内容 |
@@ -188,6 +208,7 @@ keyPassword=<你的口令>
 | UtilityLlmRouterTest | 后台小模型的配置补全与可用性判定 |
 | ImageScalingTest | 图片缩放：长边约束、宽高比、极端尺寸 |
 | ImageTurnMatcherTest | 图片挂到哪一行（挂错了只会"答非所问"，不报错） |
+| CustomVoiceParserTest | 外部音色信息解析：中英文标签、全角冒号、缺字段、非法输入 |
 
 这几块是"输入不受我们控制"的地方——用户导出的文件、用户填的地址、用户装的插件脚本、
 **上游模型返回的报文与分片方式**、以及**发送给外部接口的请求体**，
@@ -259,7 +280,8 @@ app/src/main/java/com/qingyu/app/
 │   └── JsonExt.kt               org.json 的安全取值（textOrEmpty）
 ├── data/
 │   ├── Models.kt                MessageRole / ChatMessage / Attachment / SearchHit / Persona / Favorite / MemoryItem
-│   ├── Settings.kt              AppSettings + SettingsStore + 内置角色
+│   ├── Settings.kt              AppSettings + SettingsStore
+│   ├── CustomVoice.kt           外部导入音色的模型与信息解析
 │   ├── ApiConfig.kt             三类外部接口的地址补全与配置（对话 / 语音 / 搜索）
 │   ├── db/                      DbHelper 与 Persona/Conversation/Message/Favorite/Memory/Attachment 六个 Store
 │   ├── repo/                    ConversationRepository、ChatEngine、BurstAccumulator
@@ -275,8 +297,7 @@ app/src/main/java/com/qingyu/app/
 ├── media/ImageStore.kt          图片落盘、EXIF 转正、缩放、data URL 编码
 ├── modules/                     ModuleManager、SimpleJsEngine、ModuleHost
 ├── pet/                         PetService、BootReceiver
-├── tts/                         TextToSpeechEngine（系统语音）、SpeechPlayer（AI 合成 + 回退）
-└── ui/                          主题、组件、聊天/收藏/记忆/设置/角色/模块/搜索/调试页
+├── tts/                         TextToSpeechEngine（系统语音）、SpeechPlayer（AI 合成 + 回退）└── ui/                          主题、组件、聊天/收藏/记忆/设置/角色/模块/搜索/调试页
 ```
 
 ## 六、三个值得说明的设计决定
