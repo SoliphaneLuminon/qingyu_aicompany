@@ -292,11 +292,23 @@ fun ChatScreen(
                                     is TimelineItem.Reason -> "reason-${item.text.hashCode()}"
                                 }
                             },
+                            // 新消息插进来时，后面的项平滑让位而不是瞬移；
+                            // 删除时同理，整段列表不会"跳"一下喵。
+                            contentType = { item ->
+                                when (item) {
+                                    is TimelineItem.Day -> "day"
+                                    is TimelineItem.Msg -> "msg"
+                                    is TimelineItem.Bubble -> "bubble"
+                                    is TimelineItem.Reason -> "reason"
+                                }
+                            },
                         ) { item ->
+                            // 每项单独的插入/位移过渡喵。
+                            val itemModifier = Modifier.animateItem()
                             when (item) {
                                 is TimelineItem.Day -> DaySeparator(
                                     text = item.label,
-                                    modifier = Modifier.padding(vertical = 10.dp),
+                                    modifier = itemModifier.padding(vertical = 10.dp),
                                 )
 
                                 is TimelineItem.Msg -> MessageRow(
@@ -308,6 +320,7 @@ fun ChatScreen(
                                     onDelete = { viewModel.deleteMessage(item.message) },
                                     onSpeak = { viewModel.speak(item.message) },
                                     onOpenImage = { viewModel.openImagePreview(it) },
+                                    modifier = itemModifier,
                                 )
 
                                 is TimelineItem.Bubble -> MessageRow(
@@ -321,6 +334,7 @@ fun ChatScreen(
                                     persona = state.persona,
                                     streaming = item.streaming,
                                     showAvatar = true,
+                                    modifier = itemModifier,
                                 )
 
                                 is TimelineItem.Reason -> Row(
