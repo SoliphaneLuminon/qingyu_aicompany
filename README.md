@@ -27,6 +27,8 @@
 - **依赖尽量少**：不上 Room / Retrofit / DataStore，手写 SQLite 访问层 + `HttpURLConnection` + `SharedPreferences`。
 - **能力边界是结构性的**：插件沙箱没有网络、没有文件、拿不到 `Context`，靠的是"根本没有这些入口"，而不是运行时检查。
 - **失败要看得见**：任何降级（润色超时、识图回退、语音回退、整理判不出来）都要在界面上说出来，不静默吞掉。
+- **参数要能自己看懂**：每个可调项旁边都有说明，讲清用法、调坏了会怎样、以及建议值——
+  不指望用户去读文档或靠试错猜。
 
 ## 二、功能
 
@@ -42,6 +44,7 @@
 | **桌宠** | `WindowManager` 悬浮挂件，可拖动、点击进聊天、长按收起 | 位置记忆、开机自启；不用无障碍服务，只申请"显示在其他应用上层" |
 | **模块** | 一个 zip = `manifest.json` + 入口 JS，调用宿主注入的 `qingyu.*` | 自写 JS 子集解释器；沙箱是结构性的（无网络 / 无文件 / 无反射 / 无 Context），单次运行 2 秒与指令数上限 |
 | **数据** | 聊天记录导出 JSON 与 Markdown，写入 `下载/轻语` | 兼容裸数组旧备份，自动从文件名解析角色名并建角色 |
+| **设置项说明** | 每个可调参数旁都有一个圆形「?」 | 点开分三段说明：**用法 / 调整影响 / 建议参数**。写清"调大了会怎样"和可直接照抄的推荐值，不用靠试错 |
 
 
 ## 三、部署指南
@@ -297,7 +300,12 @@ app/src/main/java/com/qingyu/app/
 ├── media/ImageStore.kt          图片落盘、EXIF 转正、缩放、data URL 编码
 ├── modules/                     ModuleManager、SimpleJsEngine、ModuleHost
 ├── pet/                         PetService、BootReceiver
-├── tts/                         TextToSpeechEngine（系统语音）、SpeechPlayer（AI 合成 + 回退）└── ui/                          主题、组件、聊天/收藏/记忆/设置/角色/模块/搜索/调试页
+├── tts/                         TextToSpeechEngine（系统语音）、SpeechPlayer（AI 合成 + 回退）
+└── ui/
+    ├── components/Common.kt     通用组件（头像、空状态、气泡外框、强调条…）
+    ├── components/HelpDot.kt    圆形「?」入口与三段式说明弹层
+    ├── settings/HelpTexts.kt    全部设置项的说明文案（用法 / 影响 / 建议值）
+    └── …                        主题、聊天 / 收藏 / 记忆 / 设置 / 角色 / 模块 / 搜索 / 调试页
 ```
 
 ## 六、三个值得说明的设计决定
