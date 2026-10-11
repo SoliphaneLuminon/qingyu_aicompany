@@ -126,6 +126,15 @@ class ChatPayloadTest {
     }
 
     @Test
+    fun `导入的外部音色 URI 原样下发`() {
+        // 音色克隆服务返回的标识带冒号，这里一旦被改写或转义就认不出音色了喵
+        val uri = "speech:wansu:daojl2tsssvc739t29kg:dndkmulxmkworqocghrx"
+        val body = SpeechRequest.body("FunAudioLLM/CosyVoice2-0.5B", uri, "mp3", "hi", 1f)
+        assertEquals(uri, body.getString("voice"))
+        assertEquals("FunAudioLLM/CosyVoice2-0.5B", body.getString("model"))
+    }
+
+    @Test
     fun `语速被限制在接口允许的范围内`() {
         // 官方范围 0.25 ~ 4.0，超出会被直接拒绝喵
         assertEquals(0.25, SpeechRequest.body("m", "alloy", "mp3", "x", 0.01f).getDouble("speed"), 0.001)
