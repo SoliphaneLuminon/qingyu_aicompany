@@ -18,9 +18,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.PersonAdd
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -51,6 +54,11 @@ import com.qingyu.app.data.ChatListEntry
 import com.qingyu.app.data.Persona
 import com.qingyu.app.ui.components.EmptyState
 import com.qingyu.app.ui.components.PersonaAvatar
+import com.qingyu.app.ui.theme.LocalDarkTheme
+import com.qingyu.app.ui.theme.QyChatRowNormalDark
+import com.qingyu.app.ui.theme.QyChatRowNormalLight
+import com.qingyu.app.ui.theme.QyChatRowPinnedDark
+import com.qingyu.app.ui.theme.QyChatRowPinnedLight
 
 /**
  * 主界面：对话列表喵。
@@ -70,6 +78,7 @@ fun HomeScreen(
     onOpenChat: (Persona) -> Unit,
     onOpenSearch: () -> Unit,
     onHideChat: (Persona) -> Unit,
+    onTogglePin: (Persona, Boolean) -> Unit,
     onAddContact: () -> Unit,
     onImportChat: () -> Unit,
     /**
@@ -84,6 +93,8 @@ fun HomeScreen(
 ) {
     var plusMenu by remember { mutableStateOf(false) }
     var hideTarget by remember { mutableStateOf<ChatListEntry?>(null) }
+    // 长按弹出的操作菜单挂在哪个条目上（null = 没弹）喵。
+    var menuFor by remember { mutableStateOf<ChatListEntry?>(null) }
 
     Scaffold(
         modifier = modifier,
@@ -149,29 +160,51 @@ fun HomeScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding),
-                contentPadding = PaddingValues(bottom = 16.dp),
+                // 上下各留一点：列表贴到标题栏与底栏时显得挤，
+                // 上下让出这段留白之后内容区看起来更舒展喵。
+                contentPadding = PaddingValues(top = 6.dp, bottom = 20.dp),
             ) {
                 items(entries, key = { it.persona.id }) { entry ->
-                    // animateItem：对话被移除后重新回来、或新对话出现时平滑让位，
-                    // 而不是"啪"地插进列表里喵。
-                    Column(modifier = Modifier.animateItem()) {
-                        ChatRow(
-                            entry = entry,
-                            onClick = { onOpenChat(entry.persona) },
-                            onLongClick = { hideTarget = entry },
-                        )
-                        HorizontalDivider(
-                            modifier = Modifier.padding(start = 76.dp),
-                            thickness = 0.6.dp,
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
-                        )
+                    // 外层 Box 只为给长按菜单当锚点：菜单要**贴着这一行**弹出喵。
+                    // 放到 Scaffold 末尾的话会锚在屏幕角落，离手指很远喵。
+                    // DropdownMenu 内部是 Popup，不受列表裁剪，靠底部也能完整显示喵。
+                    //
+                    // 里面必须再套一个 Column 来叠行与分隔线——Box 是**层叠**布局，
+                    // 直接把两样放进 Box 会让分隔线画在行的上面而不是下面喵。
+                    Box(modifier = Modifier.animateItem()) {
+                        Column {
+                            ChatRow(
+                                entry = entry,
+                                onClick = { onOpenChat(entry.persona) },
+                                onLongClick = { menuFor = entry },
+                            )
+                            HorizontalDivider(
+                                modifier = Modifier.padding(start = 76.dp),
+                                thickness = 0.6.dp,
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                            )
+                        }
+                        if (menuFor?.persona?.id == entry.persona.id) {
+                            ChatRowMenu(
+                                pinned = entry.conversation?.pinned == true,
+                                onTogglePin = {
+                                    onTogglePin(entry.persona, entry.conversation?.pinned != true)
+                                    menuFor = null
+                                },
+                                onDelete = {
+                                    hideTarget = entry
+                                    menuFor = null
+                                },
+                                onDismiss = { menuFor = null },
+                            )
+                        }
                     }
                 }
             }
         }
     }
 
-    // 长按：只给「删除对话」，语义是**从主界面移除**，不是删角色、也不删记录喵。
+    // 「删除对话」的语义是**从主界面移除**，不是删角色、也不删记录，必须说清楚喵。
     hideTarget?.let { entry ->
         AlertDialog(
             onDismissRequest = { hideTarget = null },
@@ -197,10 +230,51 @@ fun HomeScreen(
 }
 
 /**
+ * 长按一行弹出的操作菜单喵。
+ *
+ * 只有两项：置顶 / 取消置顶、删除对话喵。
+ * 「删除对话」在这里是**从主界面移除**（可恢复），与资料页里的「删除联系人」
+ * 是两件完全不同的事，所以文案必须写全「对话」二字，别让用户误以为删了人喵。
+ */
+@Composable
+private fun ChatRowMenu(
+    pinned: Boolean,
+    onTogglePin: () -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    DropdownMenu(expanded = true, onDismissRequest = onDismiss) {
+        DropdownMenuItem(
+            text = { Text(if (pinned) "取消置顶" else "置顶该对话") },
+            leadingIcon = {
+                Icon(
+                    // 未置顶用描边图钉、已置顶用实心图钉：一眼看出当前状态喵。
+                    imageVector = if (pinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
+                    contentDescription = null,
+                    tint = if (pinned) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            },
+            onClick = onTogglePin,
+        )
+        DropdownMenuItem(
+            text = { Text("删除对话") },
+            leadingIcon = {
+                Icon(Icons.Outlined.Delete, null, tint = MaterialTheme.colorScheme.error)
+            },
+            onClick = onDelete,
+        )
+    }
+}
+
+/**
  * 列表里的一行：头像 + 名字 + 最后一句 + 时间喵。
  *
- * 主界面只列有对话的角色，所以这里一定拿得到 conversation；
- * 万一为空（并发下刚被清空）就退化成一句提示，不显示空白喵。
+ * 置顶的行用更浅（浅色模式）／更亮（暗色模式）的底色区分，
+ * 深色浅色两套方向相反，所以色值来自主题常量而不是就地叠 alpha 喵。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -209,14 +283,19 @@ private fun ChatRow(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
+    val pinned = entry.conversation?.pinned == true
+    val isDark = LocalDarkTheme.current
+    val normal = if (isDark) QyChatRowNormalDark else QyChatRowNormalLight
+    val pinnedColor = if (isDark) QyChatRowPinnedDark else QyChatRowPinnedLight
+
     var pressed by remember { mutableStateOf(false) }
     val background by animateColorAsState(
-        targetValue = if (pressed) {
-            MaterialTheme.colorScheme.surfaceContainerHigh
-        } else {
-            MaterialTheme.colorScheme.surface
+        targetValue = when {
+            pressed -> MaterialTheme.colorScheme.surfaceContainerHigh
+            pinned -> pinnedColor
+            else -> normal
         },
-        animationSpec = tween(120),
+        animationSpec = tween(160),
         label = "chatRowBg",
     )
     val persona = entry.persona
@@ -231,10 +310,12 @@ private fun ChatRow(
                 onLongClick = onLongClick,
                 onLongClickLabel = "更多操作",
             )
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            // 纵向多给 2dp：上下平移让内容区变大之后，
+            // 行与行之间再松一点才不显得挤喵。
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        PersonaAvatar(emoji = persona.avatarEmoji, size = 48.dp, emphasize = true)
+        PersonaAvatar(persona = persona, size = 48.dp, emphasize = true)
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
