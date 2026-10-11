@@ -6,6 +6,7 @@ import com.qingyu.app.data.MessageRole
 import com.qingyu.app.data.Persona
 import com.qingyu.app.data.ChatMessage
 import com.qingyu.app.data.repo.StickerDirective
+import com.qingyu.app.data.repo.StickerEagerness
 
 /**
  * 把角色卡、记忆、历史消息拼成一次请求喵。
@@ -32,13 +33,29 @@ object PromptBuilder {
      * 否则模型会本能地认为聊天里加标点很生硬而继续省略喵。
      */
     private val BURST_INSTRUCTION = """
-        【发送要求——必须遵守】
-        句内该停顿的地方一定要用逗号，不要一长串连到底——前端会按逗号把它断成更短的几条消息。
-        逗号只是断句标记，不算书面腔，该用就用，但别滥用。
-        真正换气的地方再用空行隔开；整段一共 1~3 条短消息，每条都要短。
-        不要编号、不要标题、不要书面分段，也不要用括号写动作。
-        只想说一句话就直接一句，不用凑好几条。
+        ${SENDING_RULES_MARKER}——必须遵守】
+        1. 先说最要紧的：**每一句话里，该停顿的地方都要用逗号隔开**。
+           不许出现一长串没有任何标点连到底的句子——那是这条要求最常见的违规形态。
+           逗号只是断句标记，不算书面腔，该用就用，但别滥用。
+        2. 真正换气的地方再用空行隔开；整段一共 1~3 条短消息，每条都要短（尽量不超过 20 个字）。
+        3. 不要编号、不要标题、不要书面分段，也不要用括号写动作。
+        4. 只想说一句话就直接一句，不用凑好几条。
+
+        反面例子（绝对不要这样）：今天上班真的好累啊明天还要早起开会真是受不了
+        正面例子（要这样）：今天上班真的好累啊，明天还要早起开会，真是受不了
     """.trimIndent()
+
+    /**
+     * 发送要求那一段的标题喵。
+     *
+     * 单独抽成常量是为了让**润色后能验证它还在**喵（见 [keepsSendingRules]）：
+     * 润色只被要求"不许改事实与人设"，而这类格式规则既不是事实也不是人设，
+     * 小模型很容易把它当成啰嗦的排版说明顺手删掉——那样断句要求就永远到不了主模型喵。
+     */
+    const val SENDING_RULES_MARKER = "【发送要求"
+
+    /** 润色结果里还留着发送要求吗喵。没留就该退回原生提示词喵。 */
+    fun keepsSendingRules(prompt: String): Boolean = prompt.contains(SENDING_RULES_MARKER)
 
     private val REASONING_INSTRUCTION = """
         【思考】
@@ -75,6 +92,7 @@ object PromptBuilder {
         searchContext: String = "",
         temporalHint: String = "",
         stickerNames: List<String> = emptyList(),
+        stickerEagerness: StickerEagerness.Level = StickerEagerness.Level.EAGER,
     ): String = buildString {
         appendLine("# 你是谁")
         appendLine(persona.systemPrompt.ifBlank { "你是${persona.name}，一个真实的人，不是程序。" })
@@ -117,6 +135,10 @@ object PromptBuilder {
         if (stickerInstruction.isNotEmpty()) {
             appendLine()
             appendLine(stickerInstruction)
+            // 频率说明只在"确实有表情包可发"时才有意义喵：
+            // 一个表情都没有还叮嘱它多发，它只会写出一条指令却被本地丢掉喵。
+            appendLine()
+            appendLine(StickerEagerness.instruction(stickerEagerness))
         }
         // 这条**无条件加**：即使这个角色一个可用表情都没有，
         // 用户仍然可以发表情包，模型也仍然需要知道"别对着表情郑重回应"喵。
@@ -147,6 +169,7 @@ object PromptBuilder {
         searchContext: String = "",
         temporalHint: String = "",
         stickerNames: List<String> = emptyList(),
+        stickerEagerness: StickerEagerness.Level = StickerEagerness.Level.EAGER,
     ): List<ChatTurn> {
         val filtered = history
             .filter { it.role == MessageRole.USER || it.role == MessageRole.ASSISTANT }
@@ -165,6 +188,7 @@ object PromptBuilder {
                     searchContext = searchContext,
                     temporalHint = temporalHint,
                     stickerNames = stickerNames,
+                    stickerEagerness = stickerEagerness,
                 ),
             ),
         )
@@ -239,17 +263,76 @@ object PromptBuilder {
     }
 
     /**
-     * 最后一道兜底：按单换行切割聊天式短句喵。
+     * 最后一道兜底：把没有任何标点的长句按长度切断喵。
      *
-     * 有些模型会在输出里换行但不打空行——这在手机聊天风格里很常见喵。
-     * 只在句号拆也颗粒无收时才调用，且要求每段 ≥ 6 字以避免拆碎喵。
+     * 为什么必须有这一道喵：切分器唯一的信号是标点，而模型**确实经常一个逗号都不写**
+     * （用户反馈「还是经常回复那种既没拆开也没逗号的句子」就是这个）。那时前面几道
+     * 全都颗粒无收，整段话会原样变成一条又长又挤的消息喵。
+     *
+     * 断点优先选在**语气助词后面**喵（了啊呢吧吗呀哦嘛嗯啦…），
+     * 因为中文里这些字天然就是一个停顿的位置，在那里断开读起来最像真人换气喵。
+     * 窗口内找不到助词才硬切——硬切难看，但总好过一整段糊在一起喵。
+     *
+     * 长度阈值取 [MAX_RUN_LENGTH] 而不是更小：这一道是**兜底**，
+     * 只在明显过长时出手，正常的短句不该被动到喵。
      */
-    fun lineSplit(text: String): List<String> {
-        val normalized = text.replace("\r\n", "\n").trim()
-        if (normalized.isEmpty()) return emptyList()
-        val lines = normalized.split('\n').map { it.trim() }.filter { it.length >= 6 }
-        return if (lines.size > 1) lines.take(4) else emptyList()
+    fun splitLongRun(text: String, maxLength: Int = MAX_RUN_LENGTH): List<String> {
+        val normalized = text.trim()
+        if (normalized.length <= maxLength) return if (normalized.isEmpty()) emptyList() else listOf(normalized)
+
+        val out = ArrayList<String>()
+        var start = 0
+        while (start < normalized.length) {
+            if (normalized.length - start <= maxLength) {
+                out += normalized.substring(start).trim()
+                break
+            }
+            val hardEnd = start + maxLength
+            // 从窗口末尾往回找最近的语气助词：越靠后的一段越接近目标长度喵。
+            // 下界只留 [MIN_TAIL_LENGTH] 个字，免得把话切得过碎喵。
+            val softFloor = start + MIN_TAIL_LENGTH
+            var cut = -1
+            for (i in hardEnd - 1 downTo softFloor) {
+                if (normalized[i] in SOFT_BREAK_TAIL) {
+                    cut = i + 1
+                    break
+                }
+            }
+            // 找不到助词就硬切；同时保证一定前进，避免死循环喵。
+            if (cut <= start) cut = hardEnd
+            out += normalized.substring(start, cut).trim()
+            start = cut
+        }
+        val cleaned = out.filter { it.isNotBlank() }.toMutableList()
+        // 别在末尾留下光秃秃的一两个字喵：那比不断开还难看（"…清清楚楚" / "的"）喵。
+        // 尾部太短就并回上一段——它本来就是紧挨着的，拼回去读起来是原样喵。
+        if (cleaned.size >= 2 && cleaned.last().length < MIN_TAIL_LENGTH) {
+            val tail = cleaned.removeAt(cleaned.size - 1)
+            cleaned[cleaned.size - 1] = cleaned.last() + tail
+        }
+        return cleaned
     }
+
+    /**
+     * 断长句时优先落刀的**语气助词**喵。
+     *
+     * 只收几乎不可能出现在句子中间的收尾助词喵。反例是 `了`：
+     * 它当然常常收句（"我吃过了"），但也频繁出现在词中——
+     * "你哪次吃饭能少得**了**辣" 就是一个，在它后面断会得到
+     * "…能少得了" / "辣我都记得…"，把"辣"甩到了下一句，读起来是错的喵。
+     * 这种模棱两可的字宁可不收：少一个断点只会让那段稍长，
+     * 而断错位置会直接把一句话的意思拆歪喵。
+     */
+    private val SOFT_BREAK_TAIL = setOf(
+        '啊', '呢', '吧', '吗', '呀', '哦', '嘛', '嗯', '啦',
+        '哟', '喔', '诶', '唉', '哈', '喂', '嘞', '咯', '噢', '嘿',
+    )
+
+    /** 一整段没有任何标点时，超过这个长度才动用 [splitLongRun] 喵。 */
+    const val MAX_RUN_LENGTH = 18
+
+    /** 末尾剩这么短就并回上一段，不留一两个字的孤零零碎片喵。 */
+    const val MIN_TAIL_LENGTH = 4
 
     private fun cleanSegment(segment: String): String = segment
         .lines()
