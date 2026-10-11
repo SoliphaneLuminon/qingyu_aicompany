@@ -13,15 +13,15 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.automirrored.outlined.VolumeOff
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
-import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Language
-import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Search
@@ -69,11 +69,11 @@ fun ChatScreen(
     viewModel: ChatViewModel,
     speaking: Boolean,
     showReasoning: Boolean,
-    onOpenDrawer: () -> Unit,
-    onOpenPersonas: () -> Unit,
+    onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenSearch: () -> Unit,
     onOpenDebug: () -> Unit,
+    onOpenModules: () -> Unit,
     modifier: Modifier = Modifier,
     /** 软键盘当前占据的高度；0 表示键盘收起喵。 */
     imeBottomInset: Dp = 0.dp,
@@ -147,8 +147,8 @@ fun ChatScreen(
                     modifier = Modifier.statusBarsPadding(),
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
                     navigationIcon = {
-                        IconButton(onClick = onOpenDrawer) {
-                            Icon(Icons.Outlined.Menu, contentDescription = "会话")
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回聊天列表")
                         }
                     },
                     title = {
@@ -196,14 +196,6 @@ fun ChatScreen(
                             }
                             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                                 DropdownMenuItem(
-                                    text = { Text("新对话") },
-                                    leadingIcon = { Icon(Icons.Outlined.Add, null) },
-                                    onClick = {
-                                        viewModel.newConversation()
-                                        menuOpen = false
-                                    },
-                                )
-                                DropdownMenuItem(
                                     text = { Text("收藏这段对话") },
                                     leadingIcon = { Icon(Icons.Outlined.FavoriteBorder, null) },
                                     onClick = {
@@ -212,9 +204,10 @@ fun ChatScreen(
                                     },
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("切换角色") },
+                                    text = { Text("模块") },
+                                    leadingIcon = { Icon(Icons.Outlined.Extension, null) },
                                     onClick = {
-                                        onOpenPersonas()
+                                        onOpenModules()
                                         menuOpen = false
                                     },
                                 )
