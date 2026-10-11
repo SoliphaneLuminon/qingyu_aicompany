@@ -1,13 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!--
+      窗口主题：Compose 接管之前的"第一帧"由它决定。
+
+      要点喵：
+      - windowBackground 用 qy_window_bg，它同时有浅色与暗色两份
+        （values-night/colors.xml），否则暗色机器启动会闪一下近白
+      - windowLightStatusBar 交给 values-night 覆写成 false，
+        否则暗色下状态栏图标是深色、压在深色背景上看不见
+      - 不要在这里写死具体颜色，改配色请改 colors.xml
+    -->
     <style name="Theme.QingYu" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowBackground">@color/qy_window_bg</item>
-
     </style>
 
+    <!--
+      启动画面主题：保留给需要品牌开屏的场景。
+
+      注意它**当前没有被 AndroidManifest 使用**——真正的启动页由
+      MainActivity 的 enableEdgeToEdge + Compose 第一帧承担。
+      留着是因为它已经写好且无害，将来要接 SplashScreen API 可以直接用。
+    -->
     <style name="Theme.QingYu.Splash" parent="Theme.QingYu">
         <item name="android:windowBackground">@drawable/qy_splash_bg</item>
     </style>
