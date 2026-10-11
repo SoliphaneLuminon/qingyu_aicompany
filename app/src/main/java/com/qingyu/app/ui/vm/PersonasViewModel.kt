@@ -28,6 +28,8 @@ data class PersonasUiState(
     val editing: Persona? = null,
     val draft: Persona = Persona(name = "", createdAt = 0L, updatedAt = 0L),
     val toast: String? = null,
+    /** 待确认删除的角色；非空时界面弹二次确认喵。 */
+    val pendingDelete: Persona? = null,
 )
 
 class PersonasViewModel(application: Application) : AndroidViewModel(application) {
@@ -116,6 +118,23 @@ class PersonasViewModel(application: Application) : AndroidViewModel(application
             _state.update { it.copy(toast = "已删除角色及其对话") }
             reload()
         }
+    }
+
+    /**
+     * 请求删除：只把待删角色挂到状态上，由界面弹二次确认喵。
+     *
+     * 删除会连带清掉聊天记录与记忆，是不可恢复的，所以不能点了就删喵。
+     */
+    fun askDelete(persona: Persona) = _state.update { it.copy(pendingDelete = persona) }
+
+    /** 取消删除确认喵。 */
+    fun cancelDelete() = _state.update { it.copy(pendingDelete = null) }
+
+    /** 确认删除喵。 */
+    fun confirmDelete() {
+        val target = _state.value.pendingDelete ?: return
+        _state.update { it.copy(pendingDelete = null) }
+        delete(target)
     }
 
     fun clearToast() = _state.update { it.copy(toast = null) }
