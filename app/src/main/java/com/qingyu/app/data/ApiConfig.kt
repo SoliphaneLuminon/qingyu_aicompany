@@ -54,6 +54,17 @@ enum class TtsProvider(val label: String) {
     }
 }
 
+/**
+ * `/v1/audio/speech` 的常用预设音色喵。
+ *
+ * 各家网关都照着 OpenAI 这套名字实现，所以列出来当快捷选项；
+ * 真正要用别家的音色就走"导入外部音色"那条路喵。
+ */
+val PRESET_SPEECH_VOICES = listOf("alloy", "echo", "fable", "onyx", "nova", "shimmer", "coral", "verse")
+
+/** 出厂音色，也是删掉导入音色后的回退目标喵。 */
+const val DEFAULT_SPEECH_VOICE = "alloy"
+
 /** 搜索服务商喵。 */
 enum class SearchProvider(val label: String, val needsKey: Boolean, val hint: String) {
     BOCHA(
