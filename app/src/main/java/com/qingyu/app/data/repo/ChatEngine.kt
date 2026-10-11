@@ -169,10 +169,9 @@ class ChatEngine(
         if (existingUserMessageId == 0L) {
             appendUserMessage(conversationId, text, attachments)
         }
+        // 会话标题在创建时就定成了角色名，且一个角色只有一段对话，
+        // 所以这里不再拿首条消息去改标题——那是多会话时代用来区分同角色的多个对话的喵。
         val titleSource = text.ifBlank { if (attachments.isEmpty()) "" else "[图片]" }
-        if (titleSource.isNotBlank()) {
-            db.conversations.renameIfDefault(conversationId, titleSource)
-        }
         db.conversations.touch(conversationId, titleSource.ifBlank { "[图片]" }, messages.count(conversationId))
 
         generateInto(conversationId, persona, settings, searchRequested).collect { emit(it) }
@@ -681,12 +680,4 @@ class ChatEngine(
         /** 润色请求至少给的生成额度：润色比正文短，但给太紧会被截断喵。 */
         const val MIN_REFINE_TOKENS = 1024
     }
-}
-
-/** 会话默认标题的替换逻辑（`新的对话` 才会被首条消息改写喵）。 */
-private suspend fun com.qingyu.app.data.db.ConversationStore.renameIfDefault(conversationId: Long, text: String) {
-    val conversation = get(conversationId) ?: return
-    if (conversation.title.isNotBlank() && conversation.title != "新的对话") return
-    val title = text.replace("\n", " ").trim().take(18).ifBlank { "新的对话" }
-    rename(conversationId, title)
 }
