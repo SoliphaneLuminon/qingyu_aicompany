@@ -304,7 +304,7 @@ private fun ContactRow(persona: Persona, onClick: () -> Unit) {
             .padding(horizontal = 16.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        PersonaAvatar(emoji = persona.avatarEmoji, size = 40.dp)
+        PersonaAvatar(persona = persona, size = 40.dp)
         Spacer(Modifier.width(12.dp))
         Text(
             text = persona.name,
