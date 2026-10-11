@@ -21,9 +21,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -32,6 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Info
@@ -73,6 +77,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -93,6 +98,7 @@ import com.qingyu.app.ui.components.HelpDot
 import com.qingyu.app.ui.components.LabelWithHelp
 import com.qingyu.app.ui.components.RowLabelWithHelp
 import com.qingyu.app.ui.vm.DataViewModel
+import com.qingyu.app.ui.vm.ModelSlot
 import com.qingyu.app.ui.vm.SettingsViewModel
 import android.provider.Settings as AndroidSettings
 
@@ -162,6 +168,20 @@ fun SettingsScreen(
         } else {
             viewModel.clearModels()
         }
+    }
+
+    // 识图与语音（合成 / 识别共用一组）各自也可能指向别的服务商，
+    // 所以这三处也要"填完就自动列出来"，否则用户得自己去猜模型名喵。
+    LaunchedEffect(settings.vision.baseUrl, settings.vision.apiKey) {
+        viewModel.fetchSlotModels(ModelSlot.VISION, auto = true)
+    }
+    LaunchedEffect(settings.speech.baseUrl, settings.speech.apiKey) {
+        viewModel.fetchSlotModels(ModelSlot.SPEECH, auto = true)
+        viewModel.fetchSlotModels(ModelSlot.TRANSCRIBE, auto = true)
+    }
+    // 小模型的地址有两层回退（跟随主模型 / 服务商默认），所以 provider 本身也是依赖喵。
+    LaunchedEffect(settings.utilityBaseUrl, settings.utilityApiKey, settings.utilityProvider, settings.apiBaseUrl, settings.apiKey) {
+        viewModel.fetchSlotModels(ModelSlot.UTILITY, auto = true)
     }
 
     Scaffold(
@@ -443,6 +463,14 @@ fun SettingsScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    ModelSuggestions(
+                        models = state.slotModels[ModelSlot.UTILITY.key].orEmpty(),
+                        fetching = ModelSlot.UTILITY.key in state.slotFetching,
+                        error = state.slotErrors[ModelSlot.UTILITY.key],
+                        selected = settings.utilityModel,
+                        onPick = { model -> viewModel.update { it.copy(utilityModel = model) } },
+                        onRetry = { viewModel.fetchSlotModels(ModelSlot.UTILITY) },
+                    )
                     if (settings.utilityProvider.requiresKey) {
                         Spacer(Modifier.height(10.dp))
                         OutlinedTextField(
@@ -518,6 +546,14 @@ fun SettingsScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    ModelSuggestions(
+                        models = state.slotModels[ModelSlot.VISION.key].orEmpty(),
+                        fetching = ModelSlot.VISION.key in state.slotFetching,
+                        error = state.slotErrors[ModelSlot.VISION.key],
+                        selected = settings.vision.model,
+                        onPick = { model -> viewModel.update { it.copy(vision = it.vision.copy(model = model)) } },
+                        onRetry = { viewModel.fetchSlotModels(ModelSlot.VISION) },
+                    )
                 }
                 TestResultLine(text = state.visionTestResult, ok = state.visionTestOk)
                     }
@@ -562,6 +598,14 @@ fun SettingsScreen(
                         supportingText = { Text("按住说话与语音通话用它把录音转成文字") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
+                    )
+                    ModelSuggestions(
+                        models = state.slotModels[ModelSlot.TRANSCRIBE.key].orEmpty(),
+                        fetching = ModelSlot.TRANSCRIBE.key in state.slotFetching,
+                        error = state.slotErrors[ModelSlot.TRANSCRIBE.key],
+                        selected = settings.transcribeModel,
+                        onPick = { model -> viewModel.update { it.copy(transcribeModel = model) } },
+                        onRetry = { viewModel.fetchSlotModels(ModelSlot.TRANSCRIBE) },
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
@@ -616,6 +660,14 @@ fun SettingsScreen(
                         placeholder = { Text("tts-1") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
+                    )
+                    ModelSuggestions(
+                        models = state.slotModels[ModelSlot.SPEECH.key].orEmpty(),
+                        fetching = ModelSlot.SPEECH.key in state.slotFetching,
+                        error = state.slotErrors[ModelSlot.SPEECH.key],
+                        selected = settings.speech.model,
+                        onPick = { model -> viewModel.update { it.copy(speech = it.speech.copy(model = model)) } },
+                        onRetry = { viewModel.fetchSlotModels(ModelSlot.SPEECH) },
                     )
                     Spacer(Modifier.height(12.dp))
                     RowLabelWithHelp(label = "音色", content = HelpTexts.speechVoice)
@@ -1193,6 +1245,102 @@ private fun VoiceImportDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
+}
+
+/**
+ * 「填好地址与 Key 就自动列出可用模型」的那一小块喵。
+ *
+ * 抽成一个组件，是因为识图、语音合成、语音识别三处都要它；
+ * 三份手写的拷贝迟早会有一处忘了处理"清空地址要收起列表"这类细节喵。
+ *
+ * 模型多的时候列表会很长（有些网关几百个），所以**限高并可滚动**，
+ * 不然设置页会被一个模型列表撑得没法用喵。
+ */
+@Composable
+private fun ModelSuggestions(
+    models: List<String>,
+    fetching: Boolean,
+    error: String?,
+    selected: String,
+    onPick: (String) -> Unit,
+    onRetry: () -> Unit,
+) {
+    Spacer(Modifier.height(6.dp))
+    if (fetching) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(8.dp))
+            Text("正在拉取可用模型…", style = MaterialTheme.typography.labelSmall)
+        }
+        return
+    }
+    if (error != null) {
+        Text(
+            text = "没能拉到模型列表：$error",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+        TextButton(onClick = onRetry) { Text("重试") }
+        return
+    }
+    if (models.isEmpty()) {
+        // 还没拉、或拉到了空列表：给一个手动重试的入口，别让用户干等喵。
+        TextButton(onClick = onRetry) { Text("拉取可用模型") }
+        return
+    }
+    Text(
+        text = "可用模型（点选即填入，共 ${models.size} 个）",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(6.dp))
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 168.dp)
+            .clip(RoundedCornerShape(10.dp)),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        items(models, key = { it }) { model ->
+            val isSelected = selected == model
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (isSelected) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceContainerHigh
+                        },
+                    )
+                    .clickable { onPick(model) }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = model,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (isSelected) {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (isSelected) {
+                    Icon(
+                        imageVector = Icons.Outlined.Check,
+                        contentDescription = "已选中",
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+        }
+    }
 }
 
 /**
