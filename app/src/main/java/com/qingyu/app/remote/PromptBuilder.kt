@@ -1,9 +1,11 @@
 package com.qingyu.app.remote
 
 import com.qingyu.app.data.MemoryItem
+import com.qingyu.app.data.MessageKind
 import com.qingyu.app.data.MessageRole
 import com.qingyu.app.data.Persona
 import com.qingyu.app.data.ChatMessage
+import com.qingyu.app.data.repo.StickerDirective
 
 /**
  * 把角色卡、记忆、历史消息拼成一次请求喵。
@@ -43,6 +45,28 @@ object PromptBuilder {
         先把对方的语气、你们的关系和此刻情境想一遍，再决定怎么回。这段思考写在 reasoning 里，不要出现在正文。
     """.trimIndent()
 
+    /**
+     * 表情包在对话里怎么对待喵。
+     *
+     * 这条规则是用户明确要求的：表情包**更多是辅助表达**，不是话题本身喵。
+     * 不写清楚的话模型会对着每个表情都郑重回应一句（"哇这个表情好可爱！"），
+     * 聊起来像在给它做点评，很出戏喵。
+     *
+     * 唯一的例外是**对方只发了表情包、没有别的话**——那时表情就是他的全部发言，
+     * 不回等于把人晾着喵。
+     *
+     * @param canSendStickers 这个角色有没有可用表情包；没有就别说"你也可以发"，
+     *   否则模型会写出一条指令却被本地丢掉，它自己还以为发出去了喵
+     */
+    private fun stickerHandlingInstruction(canSendStickers: Boolean): String = buildString {
+        appendLine("【表情包怎么对待】")
+        appendLine("对方发的表情包多半只是给刚才的话添个情绪，**不要为它单独回一条**，顺着话题继续说就行。")
+        appendLine("只有当他只发了表情包、一句话都没说时，才需要你专门回应那个表情。")
+        if (canSendStickers) {
+            appendLine("你自己也可以发表情包来辅助表达，但同样别把它当成一条独立的消息来「汇报」。")
+        }
+    }.trimEnd()
+
     fun systemPrompt(
         persona: Persona,
         memories: List<MemoryItem>,
@@ -50,6 +74,7 @@ object PromptBuilder {
         burstReplies: Boolean,
         searchContext: String = "",
         temporalHint: String = "",
+        stickerNames: List<String> = emptyList(),
     ): String = buildString {
         appendLine("# 你是谁")
         appendLine(persona.systemPrompt.ifBlank { "你是${persona.name}，一个真实的人，不是程序。" })
@@ -86,6 +111,17 @@ object PromptBuilder {
         }
         appendLine()
         appendLine(REASONING_INSTRUCTION)
+        // 表情包说明放在发送要求之前：它是"能做什么"，
+        // 而下面那段是"发出去长什么样"，顺序上先讲能力更自然喵。
+        val stickerInstruction = StickerDirective.instruction(stickerNames)
+        if (stickerInstruction.isNotEmpty()) {
+            appendLine()
+            appendLine(stickerInstruction)
+        }
+        // 这条**无条件加**：即使这个角色一个可用表情都没有，
+        // 用户仍然可以发表情包，模型也仍然需要知道"别对着表情郑重回应"喵。
+        appendLine()
+        appendLine(stickerHandlingInstruction(canSendStickers = stickerNames.isNotEmpty()))
         if (burstReplies) {
             appendLine()
             appendLine(BURST_INSTRUCTION)
@@ -110,6 +146,7 @@ object PromptBuilder {
         historyLimit: Int,
         searchContext: String = "",
         temporalHint: String = "",
+        stickerNames: List<String> = emptyList(),
     ): List<ChatTurn> {
         val filtered = history
             .filter { it.role == MessageRole.USER || it.role == MessageRole.ASSISTANT }
@@ -127,14 +164,47 @@ object PromptBuilder {
                     burstReplies = burstReplies,
                     searchContext = searchContext,
                     temporalHint = temporalHint,
+                    stickerNames = stickerNames,
                 ),
             ),
         )
         filtered.forEach { message ->
-            turns.add(ChatTurn(if (message.role == MessageRole.USER) "user" else "assistant", message.content))
+            turns.add(
+                ChatTurn(
+                    if (message.role == MessageRole.USER) "user" else "assistant",
+                    renderHistoryContent(message),
+                ),
+            )
         }
         return turns
     }
+
+    /**
+     * 把一条历史消息渲染成送给模型的文本喵。
+     *
+     * 表情包**不能直接把名字当正文**喵。名字是"开心"这种普通词，
+     * 和用户真打出来的字在上下文里长得一模一样，模型分不清
+     * "他打了一句开心"和"他发了一个叫开心的表情"喵。
+     *
+     * 更要紧的是**稳定性**喵：以前表情走的是识图通道，每发一次都重新描述一遍，
+     * 而识图模型的措辞每次都不完全一样（"一个人在笑" / "笑得很大声"）。
+     * 于是同一张表情发三次，模型读到的就是三段不同的描述，
+     * 自然表现得像"每次都头一回见"喵。
+     *
+     * 现在统一渲染成一个固定形态的标记，同一个表情每次的字面完全一致，
+     * 模型就能一眼看出"这个刚才发过了"喵。
+     */
+    private fun renderHistoryContent(message: ChatMessage): String =
+        if (message.kind == MessageKind.STICKER) {
+            val name = message.content.trim()
+            // 谁发的要分清喵：助手自己发过的表情若也写成"对方发来"，
+            // 模型会以为那是用户发的，可能回一句"你发的这个好可爱"——自己夸自己喵。
+            val who = if (message.role == MessageRole.USER) "对方发来" else "你发了"
+            val suffix = if (name.isEmpty()) "" else "：$name"
+            "（$who 一个表情包$suffix）"
+        } else {
+            message.content
+        }
 
     /**
      * 把模型一次输出的长文本拆成多条短消息喵。
