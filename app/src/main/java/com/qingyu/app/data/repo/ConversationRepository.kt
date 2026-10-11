@@ -1,6 +1,7 @@
 package com.qingyu.app.data.repo
 
 import com.qingyu.app.core.TimeUtil
+import com.qingyu.app.data.ChatListEntry
 import com.qingyu.app.data.ChatMessage
 import com.qingyu.app.data.Conversation
 import com.qingyu.app.data.Favorite
@@ -14,24 +15,18 @@ class ConversationRepository(private val db: QingYuDatabase) {
     suspend fun openForPersona(personaId: Long): Conversation =
         db.conversations.latestOrCreate(personaId)
 
-    suspend fun create(personaId: Long, title: String = "新的对话"): Conversation {
-        val id = db.conversations.create(personaId, title)
-        return db.conversations.get(id) ?: error("会话创建失败")
-    }
+    /**
+     * 首页的角色列表喵。
+     *
+     * 只发两条查询（角色一次、对话一次）后在内存里配对，而不是每个角色查一次——
+     * 角色数量不多，但按角色逐个查库是典型的 N+1，划不来喵。
+     */
+    suspend fun chatList(): List<ChatListEntry> =
+        buildChatList(db.personas.list(), db.conversations.list())
 
     suspend fun list(): List<Conversation> = db.conversations.list()
 
-    suspend fun listForPersona(personaId: Long): List<Conversation> = db.conversations.listForPersona(personaId)
-
     suspend fun messages(conversationId: Long): List<ChatMessage> = db.messages.list(conversationId)
-
-    suspend fun rename(conversationId: Long, title: String) {
-        db.conversations.rename(conversationId, title.ifBlank { "未命名对话" })
-    }
-
-    suspend fun setPinned(conversationId: Long, pinned: Boolean) = db.conversations.setPinned(conversationId, pinned)
-
-    suspend fun delete(conversationId: Long) = db.conversations.delete(conversationId)
 
     suspend fun deleteMessage(messageId: Long) {
         val message = db.messages.get(messageId) ?: return
@@ -45,15 +40,6 @@ class ConversationRepository(private val db: QingYuDatabase) {
         val preview = messages.lastOrNull { it.role != MessageRole.REASONING }?.content?.replace("\n", " ").orEmpty()
         val updatedAt = messages.lastOrNull()?.timestamp ?: TimeUtil.now()
         db.conversations.touch(conversationId, preview, messages.size, updatedAt)
-    }
-
-    /** 首条用户消息决定了会话标题喵。 */
-    suspend fun ensureTitleFromFirstUserMessage(conversationId: Long) {
-        val conversation = db.conversations.get(conversationId) ?: return
-        if (conversation.title.isNotBlank() && conversation.title != "新的对话") return
-        val firstUser = db.messages.list(conversationId).firstOrNull { it.role == MessageRole.USER } ?: return
-        val title = firstUser.content.replace("\n", " ").trim().take(18).ifBlank { "新的对话" }
-        db.conversations.rename(conversationId, title)
     }
 
     /** 删除某条消息及其之后的所有内容，用于"从这里重新生成"喵。 */
@@ -113,4 +99,31 @@ class ConversationRepository(private val db: QingYuDatabase) {
         val id = db.favorites.insert(favorite)
         return favorite.copy(id = id)
     }
+}
+
+/**
+ * 把角色与它们各自的对话配成首页列表喵。
+ *
+ * 抽成顶层纯函数是为了能直接单测：排序与"没聊过怎么办"这两件事
+ * 一旦错了，症状是"列表顺序莫名"或"新角色不见了"，很难从界面上看出来喵。
+ *
+ * 规则喵：
+ * - 一个角色配它**最近活动**的那个对话；库里理论上每人只剩一个，
+ *   取最近的是为了容忍老库没迁移干净的残留喵
+ * - 排序照微信：**最近说过的排最前**；没聊过的用角色创建时间参与排序喵
+ * - 没聊过的角色照样出现在列表里，`conversation` 为 null喵
+ */
+internal fun buildChatList(
+    personas: List<com.qingyu.app.data.Persona>,
+    conversations: List<Conversation>,
+): List<ChatListEntry> {
+    val byPersona = conversations.groupBy { it.personaId }
+    return personas
+        .map { persona ->
+            ChatListEntry(
+                persona = persona,
+                conversation = byPersona[persona.id]?.maxByOrNull { it.updatedAt },
+            )
+        }
+        .sortedByDescending { it.sortTime }
 }
