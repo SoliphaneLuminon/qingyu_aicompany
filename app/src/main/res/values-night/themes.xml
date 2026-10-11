@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      暗色主题下覆写窗口外观喵：
+      - 状态栏图标必须转成浅色，否则深色背景上几乎看不见
+      - 窗口底色由 values-night/colors.xml 的 qy_window_bg 接管
+    -->
+    <style name="Theme.QingYu" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">@color/qy_window_bg</item>
+    </style>
+</resources>
