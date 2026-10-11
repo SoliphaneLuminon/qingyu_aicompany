@@ -269,21 +269,33 @@ object HelpTexts {
     )
 
     val speechBaseUrl = HelpContent(
-        usage = "语音合成接口地址，走 OpenAI 兼容的 /v1/audio/speech。",
-        impact = "填错会让朗读静默退化成系统语音，听起来像「设置没生效」。",
+        usage = "语音服务的接口地址，**识别与合成共用这一个**：\n" +
+            "· 合成走 /v1/audio/speech（朗读、语音通话里对方说话）\n" +
+            "· 识别走 /v1/audio/transcriptions（按住说话、语音通话里你说话）",
+        impact = "填错时合成会静默退化成系统语音，听起来像「设置没生效」；" +
+            "识别则会直接报错，提示条上会写明状态码。",
         suggestion = "OpenAI：https://api.openai.com/v1\n" +
             "硅基流动：https://api.siliconflow.cn/v1\n" +
-            "填好后先点「测试语音合成」确认能出声。",
+            "填好后先点「测试语音合成」确认能出声；识别可以直接按住说话试一句。",
     )
 
     val speechApiKey = HelpContent(
-        usage = "语音服务商的密钥，可与对话模型不是同一家。",
-        impact = "留空时朗读自动退回系统语音。",
+        usage = "语音服务商的密钥，识别与合成共用。可与对话模型不是同一家。",
+        impact = "留空时朗读自动退回系统语音，而按住说话与语音通话会提示「还没有配置语音识别接口」。",
         suggestion = "与对话接口不同家时单独填写。",
     )
 
+    val transcribeModel = HelpContent(
+        usage = "语音识别（录音转文字）用的模型名，服务于「按住说话」与语音通话。",
+        impact = "**必须与合成模型分开填**：tts-1 是合成模型，拿去识别会被服务端拒掉。\n" +
+            "留空同样会被拒绝，提示条上会写明「还没有配置语音识别模型」。",
+        suggestion = "OpenAI：whisper-1\n" +
+            "硅基流动：FunAudioLLM/SenseVoiceSmall\n" +
+            "本地 faster-whisper 网关：按它暴露的模型名填。",
+    )
+
     val speechModel = HelpContent(
-        usage = "合成用的模型名。",
+        usage = "朗读合成用的模型名（走 /v1/audio/speech）。",
         impact = "写错会导致合成失败并退回系统语音；" +
             "注意：如果当前选中的是导入进来的外部音色，合成会自动改用该音色自带的模型，这里填什么都不影响它。",
         suggestion = "OpenAI：tts-1（便宜）或 tts-1-hd（更自然）\n" +
