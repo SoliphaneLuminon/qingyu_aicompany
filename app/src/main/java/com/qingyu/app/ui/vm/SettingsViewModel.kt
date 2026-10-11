@@ -7,6 +7,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.qingyu.app.AppContainer
 import com.qingyu.app.data.AppSettings
+import com.qingyu.app.data.CustomVoiceParser
+import com.qingyu.app.data.DEFAULT_SPEECH_VOICE
+import com.qingyu.app.data.TtsProvider
+import com.qingyu.app.data.effectiveSpeechModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -164,7 +168,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     /** 测试语音合成：合成一句短话，只验证能否拿到音频，不播放喵。 */
     fun testSpeech() {
         val settings = container.settings.current
-        if (settings.speech.model.isBlank() || settings.speech.baseUrl.isBlank()) {
+        if (settings.effectiveSpeechModel().isBlank() || settings.speech.baseUrl.isBlank()) {
             _state.update { it.copy(speechTestOk = false, speechTestResult = "先填接口地址与语音模型") }
             return
         }
@@ -175,7 +179,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     val bytes = container.speechClient.synthesize(
                         endpoint = container.settings.speechEndpoint,
                         apiKey = container.settings.current.speech.apiKey,
-                        model = container.settings.current.speech.model,
+                        model = container.settings.current.effectiveSpeechModel(),
                         voice = container.settings.current.speechVoice,
                         format = container.settings.current.speechFormat,
                         text = "轻语语音测试",
@@ -194,6 +198,39 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     ),
                 )
             }
+        }
+    }
+
+    /**
+     * 导入一个外部音色喵。
+     *
+     * 解析不出音色标识就只回一句提示、不写设置喵——用户需要看到"为什么没导进来"，
+     * 而不是按钮点下去毫无反应喵。导入成功会顺手切到 AI 语音并把该音色设为当前音色喵。
+     */
+    fun importCustomVoice(raw: String) {
+        val parsed = CustomVoiceParser.parse(raw)
+        if (parsed == null) {
+            _state.update { it.copy(toast = "没找到音色标识，检查一下是否粘贴完整") }
+            return
+        }
+        container.settings.update { settings ->
+            // 同一个音色重复导入就覆盖旧的，避免列表里堆出一串同名项喵。
+            settings.copy(
+                customVoices = settings.customVoices.filterNot { it.uri == parsed.uri } + parsed,
+                speechVoice = parsed.uri,
+                ttsProvider = TtsProvider.OPENAI,
+            )
+        }
+        _state.update { it.copy(toast = "已导入音色「${parsed.name}」") }
+    }
+
+    /** 删除一个外部音色；删的正是当前选中的就退回预设音色喵。 */
+    fun removeCustomVoice(uri: String) {
+        container.settings.update { settings ->
+            settings.copy(
+                customVoices = settings.customVoices.filterNot { it.uri == uri },
+                speechVoice = if (settings.speechVoice == uri) DEFAULT_SPEECH_VOICE else settings.speechVoice,
+            )
         }
     }
 
