@@ -155,7 +155,8 @@ fun MessageRow(
     var menuOpen by remember { mutableStateOf(false) }
     val copyText = com.qingyu.app.ui.components.rememberCopyText()
 
-    // 新出现的消息淡入并轻微上浮：流式回复一条条冒出来时，比"啪"地整块出现更连贯喵。
+    // 新出现的消息淡入 + 轻微上浮 + 从自己那一侧滑进来：
+    // 自己发的从右边来、对方的从左边来，方向感与气泡位置一致喵。
     // 必须放在下面那个提前 return 之前——否则用户切换"显示思考过程"时，
     // 本函数的 remember 调用次数会变，Compose 的插槽对不上会直接崩喵。
     val appear = remember(message.id) { Animatable(0f) }
@@ -171,7 +172,9 @@ fun MessageRow(
             .fillMaxWidth()
             .graphicsLayer {
                 alpha = appear.value
-                translationY = (1f - appear.value) * 14f
+                translationY = (1f - appear.value) * 12f
+                // 位移压得很小：气泡本身就在屏幕一侧，滑太远会显得晃喵。
+                translationX = (1f - appear.value) * (if (isUser) 26f else -26f)
             }
             .padding(horizontal = 12.dp, vertical = 4.dp),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
