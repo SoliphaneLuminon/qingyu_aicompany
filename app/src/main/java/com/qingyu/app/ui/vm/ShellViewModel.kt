@@ -48,12 +48,46 @@ class ShellViewModel(application: Application) : AndroidViewModel(application) {
 
     private val container = AppContainer.get(application)
 
+    /**
+     * 二级页面的导航栈喵。
+     *
+     * 只留 [ShellUiState.screen]（"当前在哪一屏"）给界面用，
+     * 栈本身是内部状态——界面只关心当前这一屏，不关心底下压了几层喵。
+     */
+    private var navStack = NavStack()
+
     private val _state = MutableStateFlow(ShellUiState())
     val state: StateFlow<ShellUiState> = _state.asStateFlow()
 
-    fun navigate(screen: AppScreen) = _state.update { it.copy(screen = screen) }
+    /** 现在按返回键能退回上一层吗（而不是退出应用）喵。 */
+    val canGoBack: Boolean get() = navStack.canGoBack
 
-    fun back() = _state.update { it.copy(screen = AppScreen.Home) }
+    /**
+     * 进入一个二级页面喵。
+     *
+     * 允许连续压多层（资料页 → 聊天信息 → 资料页），这样返回键能逐层退回喵。
+     */
+    fun navigate(screen: AppScreen) {
+        navStack = navStack.push(screen)
+        _state.update { it.copy(screen = navStack.current) }
+    }
+
+    /**
+     * 退回上一层喵。
+     *
+     * 已经在最外层时**什么都不做**——由调用方决定要不要交给系统退出应用喵。
+     */
+    fun back() {
+        if (!navStack.canGoBack) return
+        navStack = navStack.pop()
+        _state.update { it.copy(screen = navStack.current) }
+    }
+
+    /** 一路退回标签页，用于"点发消息进对话"这类要跳出当前钻取链路的场景喵。 */
+    fun backToTabs() {
+        navStack = navStack.reset()
+        _state.update { it.copy(screen = navStack.current) }
+    }
 
     fun refresh() {
         viewModelScope.launch {
