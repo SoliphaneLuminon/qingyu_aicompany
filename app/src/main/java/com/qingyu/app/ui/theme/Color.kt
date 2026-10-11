@@ -57,3 +57,20 @@ val QyUserBubbleLight = Color(0xFF95EC69)
 val QyUserBubbleDark = Color(0xFF07C160)
 val QyPetBubble = Color(0xFFFFFFFF)   // 对方气泡浅色喵
 val QyPetBubbleDark = Color(0xFF2E2E2E)
+
+// ---------------------------------------------------------------- 列表层级
+// 列表页三层底色，明度次序固定为：普通 → 底部标签栏 → 置顶。
+//
+// 浅色下"变浅"是**更灰**（白底上略暗才看得出层次）：
+//   普通 #FFFFFF → 底栏 #F7F7F7 → 置顶 #F2F2F2
+// 暗色下"变浅"是**更亮**：
+//   普通 #191919 → 底栏 #202020 → 置顶 #262626
+//
+// 两套方向相反，所以不能共用一个 alpha 叠加，必须各写一个色值喵。
+val QyChatRowNormalLight = Color(0xFFFFFFFF)
+val QyBottomBarLight = Color(0xFFF7F7F7)
+val QyChatRowPinnedLight = Color(0xFFF2F2F2)
+
+val QyChatRowNormalDark = Color(0xFF191919)
+val QyBottomBarDark = Color(0xFF202020)
+val QyChatRowPinnedDark = Color(0xFF262626)
