@@ -119,22 +119,39 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (db.personas.count() == 0) {
             com.qingyu.app.data.SeedPersonas.all().forEach { db.personas.insert(it) }
         }
-        val personas = db.personas.list()
-        val preferred = container.settings.current.lastPersonaId
-            .takeIf { id -> personas.any { it.id == id } }
-            ?: personas.firstOrNull()?.id
-            ?: 0L
-        val persona = personas.firstOrNull { it.id == preferred } ?: personas.firstOrNull()
-        if (persona == null) {
-            _state.update { it.copy(loading = false, banner = "还没有角色，先创建一个吧") }
-            return
-        }
-        openPersona(persona)
+        // 首页是角色列表，所以启动只加载列表，不自动进入任何一段对话喵。
+        refreshPersonas()
+        _state.update { it.copy(loading = false) }
     }
 
-    /** 切换到某个角色：取最近会话，必要时写入开场白喵。 */
+    /**
+     * 刷新首页的角色列表喵。
+     *
+     * 这是修掉"新建角色后看不到"的关键：以前这个列表只在返回时刷新一次，
+     * 新建角色后聊天页手里还是旧列表，自然找不到刚建的人喵。
+     * 现在任何会改动角色的事件（新建 / 编辑 / 复制 / 删除 / 进页面）都走这里喵。
+     */
+    fun refreshPersonas() {
+        viewModelScope.launch {
+            val entries = container.conversations.chatList()
+            _state.update {
+                it.copy(
+                    chatList = entries,
+                    personas = entries.map { entry -> entry.persona },
+                )
+            }
+        }
+    }
+
+    /**
+     * 进入某个角色的对话喵。
+     *
+     * 一个角色一段对话，所以这里不做"挑一个最近的对话"以外的任何选择喵；
+     * 对话不存在时才由 [ChatEngine.openConversation] 建一个（并在有开场白时写入）喵。
+     */
     fun openPersona(persona: Persona) {
         streamJob?.cancel()
+        typingJob?.cancel()
         pendingInputQueue.clear()
         viewModelScope.launch {
             _state.update { it.copy(loading = true) }
@@ -149,104 +166,45 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     messages = messages,
                     stream = ChatStreamState(),
                     lastContext = null,
-                    conversations = db.conversations.listForPersona(persona.id),
-                    personas = db.personas.list(),
                     banner = null,
                     needsSetup = container.settings.current.apiKey.isBlank(),
                 )
             }
+            // 开场白可能是刚写进去的，回列表时预览要能立刻反映出来喵。
+            refreshPersonas()
         }
     }
 
-    fun refreshPersonas() {
-        viewModelScope.launch {
-            _state.update { it.copy(personas = db.personas.list()) }
-        }
-    }
-
-    fun switchConversation(conversationId: Long) {
+    /** 从对话返回角色列表：清掉当前对话，让顶栏与输入栏都回到"未选中"状态喵。 */
+    fun closeChat() {
         streamJob?.cancel()
-        typingQueue.clear()
+        typingJob?.cancel()
         pendingInputQueue.clear()
-        viewModelScope.launch {
-            val conversation = db.conversations.get(conversationId) ?: return@launch
-            val persona = db.personas.get(conversation.personaId) ?: return@launch
-            val messages = engine.history(conversationId)
-            _state.update {
-                it.copy(
-                    persona = persona,
-                    conversation = conversation,
-                    messages = messages,
-                    stream = ChatStreamState(),
-                    lastContext = null,
-                    conversations = db.conversations.listForPersona(persona.id),
-                )
-            }
+        _state.update {
+            it.copy(
+                persona = null,
+                conversation = null,
+                messages = emptyList(),
+                stream = ChatStreamState(),
+                lastContext = null,
+                input = "",
+                pendingAttachments = emptyList(),
+            )
         }
+        refreshPersonas()
     }
 
-    fun newConversation() {
-        val persona = _state.value.persona ?: return
-        streamJob?.cancel()
-        typingQueue.clear()
-        pendingInputQueue.clear()
+    /**
+     * 删除一个角色喵。
+     *
+     * 会话、消息、记忆、索引都由 [PersonaStore.delete] 连带清理喵；
+     * 删掉的若是当前正打开的那个角色，就把对话状态一并清空退回列表喵。
+     */
+    fun deletePersona(persona: Persona) {
         viewModelScope.launch {
-            val conversation = container.conversations.create(persona.id)
-            engine.maybeInsertGreeting(conversation, persona.id)
-            val messages = engine.history(conversation.id)
-            _state.update {
-                it.copy(
-                    conversation = conversation,
-                    messages = messages,
-                    stream = ChatStreamState(),
-                    lastContext = null,
-                    conversations = db.conversations.listForPersona(persona.id),
-                )
-            }
-        }
-    }
-
-    fun deleteConversation(conversationId: Long) {
-        val persona = _state.value.persona ?: return
-        viewModelScope.launch {
-            db.conversations.delete(conversationId)
-            val remaining = db.conversations.listForPersona(persona.id)
-            val next = remaining.firstOrNull()
-            if (next == null) {
-                val fresh = engine.openConversation(persona.id)
-                engine.maybeInsertGreeting(fresh, persona.id)
-                _state.update {
-                    it.copy(
-                        conversation = fresh,
-                        messages = engine.history(fresh.id),
-                        conversations = db.conversations.listForPersona(persona.id),
-                    )
-                }
-            } else {
-                switchConversation(next.id)
-            }
-        }
-    }
-
-    fun renameConversation(conversationId: Long, title: String) {
-        viewModelScope.launch {
-            db.conversations.rename(conversationId, title)
-            _state.update { current ->
-                current.copy(
-                    conversations = db.conversations.listForPersona(current.persona?.id ?: 0L),
-                    conversation = current.conversation?.takeIf { it.id != conversationId }
-                        ?: db.conversations.get(conversationId),
-                )
-            }
-        }
-    }
-
-    fun setPinned(conversationId: Long, pinned: Boolean) {
-        viewModelScope.launch {
-            db.conversations.setPinned(conversationId, pinned)
-            _state.update { current ->
-                current.copy(conversations = db.conversations.listForPersona(current.persona?.id ?: 0L))
-            }
+            db.personas.delete(persona.id)
+            if (_state.value.persona?.id == persona.id) closeChat()
+            refreshPersonas()
         }
     }
 
@@ -562,9 +520,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 messages = messages,
                 conversation = refreshed ?: it.conversation,
-                conversations = db.conversations.listForPersona(it.persona?.id ?: 0L),
             )
         }
+        // 摘要（预览与排序时间）变了，首页列表要跟上喵。
+        refreshPersonas()
     }
 
     /**
