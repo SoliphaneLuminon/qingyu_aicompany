@@ -1,10 +1,12 @@
 package com.qingyu.app.ui.chat
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -36,6 +38,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -151,12 +155,24 @@ fun MessageRow(
     var menuOpen by remember { mutableStateOf(false) }
     val copyText = com.qingyu.app.ui.components.rememberCopyText()
 
+    // 新出现的消息淡入并轻微上浮：流式回复一条条冒出来时，比"啪"地整块出现更连贯喵。
+    // 必须放在下面那个提前 return 之前——否则用户切换"显示思考过程"时，
+    // 本函数的 remember 调用次数会变，Compose 的插槽对不上会直接崩喵。
+    val appear = remember(message.id) { Animatable(0f) }
+    LaunchedEffect(message.id) {
+        appear.animateTo(1f, spring(dampingRatio = 0.82f, stiffness = 420f))
+    }
+
     // 用户在设置里关掉思考展示时，reasoning 消息整条不渲染喵。
     if (message.role == MessageRole.REASONING && !showReasoning) return
 
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .graphicsLayer {
+                alpha = appear.value
+                translationY = (1f - appear.value) * 14f
+            }
             .padding(horizontal = 12.dp, vertical = 4.dp),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
         verticalAlignment = Alignment.Top,
