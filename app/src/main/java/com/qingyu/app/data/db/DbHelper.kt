@@ -43,8 +43,15 @@ object Db {
      * - 主界面只显示没被移除的对话，但**角色、消息、记忆一个都不删**喵；
      * - 从通讯录进去或发出新消息就会回来，所以它是一个"隐藏"标记而不是删除喵
      *   （`conversations.hidden`）。
+     *
+     * v8：头像可上传、加表情包与红包喵。
+     * - `personas.avatar_image` 存自定义头像的文件名（空 = 仍用 emoji）喵；
+     * - 新建 `stickers` 表：表情包的图片与**名字**，名字要参与发送时的语义喵；
+     * - `messages.kind` 区分普通文字与"表情包 / 红包"这两类结构化消息喵。
+     *   用单独一列而不是塞进 content 里做前缀标记，是因为前缀会污染送给模型的文本，
+     *   而且用户手打的字里出现同样的前缀就会误判喵。
      */
-    const val VERSION = 7
+    const val VERSION = 8
 }
 
 class DbHelper(context: Context) : SQLiteOpenHelper(context.applicationContext, Db.NAME, null, Db.VERSION) {
@@ -58,6 +65,7 @@ class DbHelper(context: Context) : SQLiteOpenHelper(context.applicationContext, 
         createAttachments(db)
         createMemoryTerms(db)
         createMemoryState(db)
+        createStickers(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -88,6 +96,16 @@ class DbHelper(context: Context) : SQLiteOpenHelper(context.applicationContext, 
         if (oldVersion < 7) {
             // v6 -> v7：只加一列，不动既有数据；老对话默认都是"显示中"（0）喵。
             db.execSQL("ALTER TABLE conversations ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0")
+        }
+        if (oldVersion < 8) {
+            // v7 -> v8：只加列加表，老数据一律走默认值喵。
+            // `avatar_image` 默认空串 = 继续用 emoji，所以老角色升级后外观完全不变喵。
+            // `kind` 默认 'text'，历史消息全部落进普通文字分支喵。
+            db.execSQL("ALTER TABLE personas ADD COLUMN avatar_image TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'text'")
+            db.execSQL("ALTER TABLE messages ADD COLUMN sticker_id INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE messages ADD COLUMN payload TEXT NOT NULL DEFAULT ''")
+            createStickers(db)
         }
     }
 
@@ -140,6 +158,7 @@ class DbHelper(context: Context) : SQLiteOpenHelper(context.applicationContext, 
             model_override TEXT NOT NULL DEFAULT '',
             temperature_override REAL,
             tts_voice_hint TEXT NOT NULL DEFAULT '',
+            avatar_image TEXT NOT NULL DEFAULT '',
             built_in INTEGER NOT NULL DEFAULT 0,
             sort_order INTEGER NOT NULL DEFAULT 0,
             created_at INTEGER NOT NULL,
@@ -181,11 +200,45 @@ class DbHelper(context: Context) : SQLiteOpenHelper(context.applicationContext, 
                 favorite INTEGER NOT NULL DEFAULT 0,
                 error TEXT,
                 search_json TEXT NOT NULL DEFAULT '',
-                has_image INTEGER NOT NULL DEFAULT 0
+                has_image INTEGER NOT NULL DEFAULT 0,
+                kind TEXT NOT NULL DEFAULT 'text',
+                sticker_id INTEGER NOT NULL DEFAULT 0,
+                payload TEXT NOT NULL DEFAULT ''
             )
             """.trimIndent(),
         )
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id, timestamp, id)")
+    }
+
+    /**
+     * 表情包表喵。
+     *
+     * `name` 不是装饰：发送时它作为文字内容进入上下文，图片同时交给多模态模型，
+     * 两边各占一半语义——所以名字必须能表达这个表情是什么意思喵。
+     * 也因此**没有**把名字做成可空的：没有名字的表情包等于一段无意义的图，
+     * 模型只能瞎猜，不如导入时就补一个喵。
+     *
+     * `file_path` 存应用私有目录内的绝对路径，与 [createAttachments] 的口径一致喵；
+     * 不存字节是为了让列表滚动时不必反复读库、也让备份可以只带路径喵。
+     */
+    private fun createStickers(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS stickers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL DEFAULT '',
+                file_path TEXT NOT NULL,
+                mime_type TEXT NOT NULL DEFAULT 'image/png',
+                width INTEGER NOT NULL DEFAULT 0,
+                height INTEGER NOT NULL DEFAULT 0,
+                size_bytes INTEGER NOT NULL DEFAULT 0,
+                use_count INTEGER NOT NULL DEFAULT 0,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL
+            )
+            """.trimIndent(),
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_sticker_order ON stickers(sort_order, created_at DESC)")
     }
 
     private fun createFavorites(db: SQLiteDatabase) {
