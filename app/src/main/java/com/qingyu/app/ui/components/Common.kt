@@ -211,13 +211,18 @@ fun HairLine(modifier: Modifier = Modifier) {
     )
 }
 
-/** 用于列表项的左侧强调条喵。 */
+/** 用于列表项的左侧强调条喵。尺寸可调，说明弹层的小标题也复用它喵。 */
 @Composable
-fun AccentBar(color: Color, modifier: Modifier = Modifier) {
+fun AccentBar(
+    color: Color,
+    modifier: Modifier = Modifier,
+    width: Dp = 3.dp,
+    height: Dp = 28.dp,
+) {
     Box(
         modifier = modifier
-            .width(3.dp)
-            .height(28.dp)
+            .width(width)
+            .height(height)
             .clip(RoundedCornerShape(2.dp))
             .background(color),
     )
