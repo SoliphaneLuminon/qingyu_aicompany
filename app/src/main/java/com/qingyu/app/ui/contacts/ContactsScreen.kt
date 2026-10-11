@@ -78,6 +78,13 @@ fun ContactsScreen(
     onOpenPersona: (Persona) -> Unit,
     onAddContact: () -> Unit,
     onOpenChat: (Persona) -> Unit,
+    /**
+     * 首屏数据是否还在加载喵。
+     *
+     * 与主界面同理：列表初始为空，不加区分就会先闪一下「通讯录还是空的」
+     * 再变成真实列表，看起来像"打开时白了一下"喵。
+     */
+    loading: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val groups = remember(personas) {
@@ -109,7 +116,14 @@ fun ContactsScreen(
             )
         },
     ) { innerPadding ->
-        if (personas.isEmpty()) {
+        if (personas.isEmpty() && loading) {
+            // 加载中先留白，避免闪一下"通讯录还是空的"这种错误内容喵。
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding),
+            )
+        } else if (personas.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
