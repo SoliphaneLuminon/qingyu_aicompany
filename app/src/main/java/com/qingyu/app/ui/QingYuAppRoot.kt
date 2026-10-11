@@ -3,20 +3,18 @@ package com.qingyu.app.ui
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Contacts
@@ -40,6 +38,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
@@ -65,10 +64,6 @@ import com.qingyu.app.ui.vm.ChatViewModel
 import com.qingyu.app.ui.vm.DataViewModel
 import com.qingyu.app.ui.vm.PersonasViewModel
 import com.qingyu.app.ui.vm.ShellViewModel
-import kotlinx.coroutines.delay
-
-/** 对话退场动画时长，与下面 [AnimatedVisibility] 的 exit 保持一致喵。 */
-private const val CHAT_EXIT_MS = 260L
 
 /**
  * 底部标签喵。
@@ -96,26 +91,53 @@ private fun rememberImeBottomInset(): Dp =
     with(LocalDensity.current) { WindowInsets.ime.getBottom(this).toDp() }
 
 /**
- * 二级页面（搜索 / 模块 / 调试）的入场动画喵。
+ * 读取系统底部（导航栏 / 手势条）让位高度喵。
+ *
+ * 对话覆盖层现在叠在 Scaffold **外面**，拿不到 Scaffold 的 innerPadding，
+ * 而它又是 edge-to-edge 的，所以系统栏高度得自己量、自己传给聊天页，
+ * 否则输入栏会压在手势条下面点不到喵。
+ */
+@Composable
+private fun rememberSystemBottomInset(): Dp =
+    with(LocalDensity.current) { WindowInsets.systemBars.getBottom(this).toDp() }
+
+/**
+ * 二级页面（搜索 / 模块 / 调试 / 聊天信息 / 角色资料）的入场动画喵。
  *
  * 这几页在导航上是"提前 return"的独立分支，没有常驻容器可以承载进出场，
- * 所以只做入场：淡入 + 一点点向右推进，给出"进入了新一屏"的方向感喵。
- * 位移刻意压得很小（宽度的 1/14），太大反而显得卡顿喵。
+ * 所以只做入场：一点点向右推进，给出"进入了新一屏"的方向感喵。
+ *
+ * **为什么不用 `AnimatedVisibility(visible = false → true)`**喵：
+ * 它初始不可见时一个子项都不组合，会先露出一帧**空的窗口背景**，
+ * 用户看到的就是"白屏闪一下再出现内容"喵。
+ * 这里改成内容**始终组合**、只把位移从右推到原位；
+ * 外面再垫一层不透明的主题底色，滑动过程中露出的也是应用自己的颜色，
+ * 而不是窗口背景——两处一起才彻底没有那一帧白喵。
  */
 @Composable
 private fun ScreenEnter(content: @Composable () -> Unit) {
-    var visible by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { visible = true }
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(animationSpec = tween(durationMillis = 180)) +
-            slideInHorizontally(
-                animationSpec = tween(durationMillis = 240),
-                initialOffsetX = { width -> width / 14 },
-            ),
-        exit = fadeOut(animationSpec = tween(durationMillis = 120)),
+    val progress = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        progress.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing),
+        )
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surface),
     ) {
-        content()
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    // 只推移不到一屏宽的十二分之一，太多反而像卡顿喵。
+                    translationX = (1f - progress.value) * (size.width / 12f)
+                },
+        ) {
+            content()
+        }
     }
 }
 
@@ -168,25 +190,44 @@ fun QingYuAppRoot(container: AppContainer) {
     val imeBottom = rememberImeBottomInset()
     val imeVisible = imeBottom > 0.dp
 
+    // 系统手势条 / 导航栏高度：对话覆盖层在 Scaffold 外面，得自己量喵。
+    val systemBottom = rememberSystemBottomInset()
+
     // 当前是否停在某个角色的对话里（主界面 → 对话 是盖在上面的一层）喵。
     val inChat = chatState.persona != null
 
     /**
-     * 对话覆盖层的可见性喵。
+     * 对话覆盖层的进出场进度喵。
      *
-     * 它比 [inChat] 多活一小会儿：关闭对话时 [chatState] 立刻被清空，
-     * 若直接用 `inChat` 驱动，退场动画还没播完内容就没了，会看到一张空白页滑出去喵。
-     * 所以这里用 `snapTo` 立即置为 true、关闭时延迟到动画播完再置 false，
-     * 期间用 [lastChatState] 顶替着渲染喵。
+     * 用一个 0..1 的进度量而不是布尔可见性，是为了避开两件事喵：
+     * - 布尔 + `AnimatedVisibility` 在"不可见"那一帧**不组合子项**，
+     *   露出的会是窗口背景（近白），也就是用户看到的"白屏一下"
+     * - 退场时 [ChatViewModel.closeChat] 会立刻清空 [chatState]，
+     *   若直接用 `persona != null` 当可见性，动画没播完内容就没了，
+     *   会滑出一张空白页
+     *
+     * 所以这里显式推进度：进场 0→1，退场 1→0，播完才把覆盖层卸掉；
+     * 期间渲染用 [lastChatState] 里那份「最后一次打开时的快照」顶替喵。
      */
-    var showChat by remember { mutableStateOf(false) }
+    val chatProgress = remember { Animatable(0f) }
+    // 覆盖层是否还挂着（进度退到 0 且动画结束后才卸），它是真正的"要不要渲染"喵。
+    var chatMounted by remember { mutableStateOf(false) }
     val lastChatState = remember { mutableStateOf<ChatUiState?>(null) }
+
     LaunchedEffect(inChat) {
         if (inChat) {
-            showChat = true
+            chatMounted = true
+            chatProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
+            )
         } else {
-            delay(CHAT_EXIT_MS)
-            showChat = false
+            chatProgress.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 260, easing = FastOutLinearInEasing),
+            )
+            // 动画收尾再卸掉，并丢掉快照，免得下次打开先闪一下上一个人的消息喵。
+            chatMounted = false
             lastChatState.value = null
         }
     }
@@ -338,140 +379,144 @@ fun QingYuAppRoot(container: AppContainer) {
         AppScreen.Home -> Unit
     }
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        containerColor = MaterialTheme.colorScheme.surface,
-        bottomBar = {
-            // 键盘弹出时收起底部标签栏：它本来就被键盘完全遮住喵，
-            // 但 Scaffold 仍会为它预留约 80dp。聊天页的输入栏上移了「整个键盘高度喵」，
-            // 两边一叠加，输入栏就会停在键盘上方约一个标签栏高的位置——那条空白正是它喵。
-            if (!imeVisible) {
-                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                    HomeTab.entries.forEach { item ->
-                        NavigationBarItem(
-                            selected = tab == item,
-                            onClick = {
-                                // 从别的标签切回"聊天"时，回到角色列表而不是上次那段对话喵。
-                                if (item == HomeTab.HOME && tab != HomeTab.HOME) chatViewModel.closeChat()
-                                tab = item
-                            },
-                            icon = {
-                                Icon(
-                                    imageVector = when (item) {
-                                        HomeTab.HOME -> Icons.Outlined.ChatBubbleOutline
-                                        HomeTab.CONTACTS -> Icons.Outlined.Contacts
-                                        HomeTab.FAVORITES -> Icons.Outlined.FavoriteBorder
-                                        HomeTab.MEMORY -> Icons.Outlined.Psychology
-                                        HomeTab.SETTINGS -> Icons.Outlined.Settings
-                                    },
-                                    contentDescription = item.label,
-                                )
-                            },
-                            label = { Text(item.label) },
-                        )
+    // 最外层垫一层不透明底色：任何一帧、任何页面切换的空隙里露出来的
+    // 都应该是应用自己的颜色，而不是窗口背景（近白，深色主题下就是"白屏闪一下"的来源）喵。
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surface),
+    ) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            containerColor = MaterialTheme.colorScheme.surface,
+            bottomBar = {
+                // 键盘弹出时收起底部标签栏：它本来就被键盘完全遮住喵，
+                // 但 Scaffold 仍会为它预留约 80dp。聊天页的输入栏上移了「整个键盘高度喵」，
+                // 两边一叠加，输入栏就会停在键盘上方约一个标签栏高的位置——那条空白正是它喵。
+                if (!imeVisible) {
+                    NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                        HomeTab.entries.forEach { item ->
+                            NavigationBarItem(
+                                selected = tab == item,
+                                onClick = {
+                                    // 从别的标签切回"聊天"时，回到列表而不是上次那段对话喵。
+                                    if (item == HomeTab.HOME && tab != HomeTab.HOME) chatViewModel.closeChat()
+                                    tab = item
+                                },
+                                icon = {
+                                    Icon(
+                                        imageVector = when (item) {
+                                            HomeTab.HOME -> Icons.Outlined.ChatBubbleOutline
+                                            HomeTab.CONTACTS -> Icons.Outlined.Contacts
+                                            HomeTab.FAVORITES -> Icons.Outlined.FavoriteBorder
+                                            HomeTab.MEMORY -> Icons.Outlined.Psychology
+                                            HomeTab.SETTINGS -> Icons.Outlined.Settings
+                                        },
+                                        contentDescription = item.label,
+                                    )
+                                },
+                                label = { Text(item.label) },
+                            )
+                        }
                     }
                 }
-            }
-        },
-    ) { innerPadding ->
-        // 外壳已经为底部让出的高度（标签栏 / 系统导航栏），交给各页面做减法喵。
-        val reservedBottom = innerPadding.calculateBottomPadding()
-        Box(modifier = Modifier.padding(innerPadding)) {
-            // 底部标签切换时做一次交叉淡入淡出：不引入滑动是因为页面宽度都占满，
-            // 横向位移反而会让人以为可以左右滑，淡入更符合"换了一屏"的直觉喵。
-            Crossfade(
-                targetState = tab,
-                animationSpec = tween(durationMillis = 220),
-                label = "homeTab",
-            ) { current ->
-                when (current) {
-                    HomeTab.HOME -> HomeScreen(
-                        entries = chatState.chatList,
-                        onOpenChat = { persona -> chatViewModel.openPersona(persona) },
-                        onOpenSearch = {
-                            shellViewModel.navigate(AppScreen.Search(0L))
-                        },
-                        onHideChat = { persona ->
-                            chatViewModel.hideChatOf(persona)
-                        },
-                        onAddContact = { personaEditor.createNew() },
-                        onImportChat = { importLauncher.launch(arrayOf("application/json", "text/plain", "*")) },
-                        snackbarHostState = homeSnackbar,
-                    )
+            },
+        ) { innerPadding ->
+            Box(modifier = Modifier.padding(innerPadding)) {
+                // 底部标签切换时做一次交叉淡入淡出：不引入滑动是因为页面宽度都占满，
+                // 横向位移反而会让人以为可以左右滑，淡入更符合"换了一屏"的直觉喵。
+                Crossfade(
+                    targetState = tab,
+                    animationSpec = tween(durationMillis = 220),
+                    label = "homeTab",
+                ) { current ->
+                    when (current) {
+                        HomeTab.HOME -> HomeScreen(
+                            entries = chatState.chatList,
+                            loading = chatState.loading,
+                            onOpenChat = { persona -> chatViewModel.openPersona(persona) },
+                            onOpenSearch = {
+                                shellViewModel.navigate(AppScreen.Search(0L))
+                            },
+                            onHideChat = { persona ->
+                                chatViewModel.hideChatOf(persona)
+                            },
+                            onAddContact = { personaEditor.createNew() },
+                            onImportChat = { importLauncher.launch(arrayOf("application/json", "text/plain", "*")) },
+                            snackbarHostState = homeSnackbar,
+                        )
 
-                    HomeTab.CONTACTS -> ContactsScreen(
-                        personas = chatState.allPersonas,
-                        onOpenPersona = { persona ->
-                            shellViewModel.navigate(AppScreen.PersonaDetail(persona.id))
-                        },
-                        onAddContact = { personaEditor.createNew() },
-                        onOpenChat = { persona -> chatViewModel.openPersona(persona) },
-                    )
+                        HomeTab.CONTACTS -> ContactsScreen(
+                            personas = chatState.allPersonas,
+                            loading = chatState.loading,
+                            onOpenPersona = { persona ->
+                                shellViewModel.navigate(AppScreen.PersonaDetail(persona.id))
+                            },
+                            onAddContact = { personaEditor.createNew() },
+                            onOpenChat = { persona -> chatViewModel.openPersona(persona) },
+                        )
 
-                    HomeTab.FAVORITES -> FavoritesScreen(
-                        container = container,
-                        personaId = activePersonaId,
-                    )
+                        HomeTab.FAVORITES -> FavoritesScreen(
+                            container = container,
+                            personaId = activePersonaId,
+                        )
 
-                    HomeTab.MEMORY -> MemoryScreen(
-                        personaId = activePersonaId,
-                    )
+                        HomeTab.MEMORY -> MemoryScreen(
+                            personaId = activePersonaId,
+                        )
 
-                    HomeTab.SETTINGS -> SettingsScreen(container = container)
+                        HomeTab.SETTINGS -> SettingsScreen(container = container)
+                    }
                 }
             }
         }
 
         // ---------------------------------------------------------------- 对话覆盖层
-        // 对话不是"标签页里的一屏"，而是像微信那样**从右侧推入、盖住整个屏幕**
-        // （包括底部标签栏）喵。所以它不放在 Scaffold 的 content 里，
-        // 而是叠在最外层，这样推进/退回时列表与标签栏都保持原样被它盖住喵。
+        // 它必须是 Scaffold 的**兄弟**，不能放在 content 里喵。
         //
-        // 退场时 chatState 已经被 closeChat 清空（persona 立刻置空），
-        // 直接渲染会看到"空白页滑出去"。所以留一份最后一次的快照，
-        // 在退场期间顶替它；动画播完就丢掉喵。
+        // Material3 的 Scaffold 先摆 body、**后摆 bottomBar**，也就是标签栏压在正文之上喵。
+        // 之前放在 content 里时，五个标签的导航栏正好盖住聊天页底部的输入栏，
+        // 表现就是"进了对话找不到输入框"（键盘一弹出标签栏收起，输入框才露出来）喵。
+        // 放到外层之后它才真的盖住整屏、含底部标签栏，与设计意图一致喵。
         //
-        // 只在"确实打开了某个角色"时更新快照：ChatUiState 是 data class、
-        // 比较是结构相等，写回同值不会触发重组，所以这里不会打转喵。
+        // 退场时 chatState 已被 closeChat 清空（persona 立刻置空），
+        // 直接渲染会看到空白滑出去，所以留一份最后一次的快照顶替到动画播完喵。
         SideEffect {
             if (chatState.persona != null) lastChatState.value = chatState
         }
-        // 关键：**开着的时候用实时状态，关掉之后（persona 没了）用快照**。
-        // 若写成 `if (showChat) chatState else 快照`，退场动画期间 showChat 仍是 true，
-        // 拿到的正是被清空的那份，反而会滑出一张空白页喵。
         val renderState = if (chatState.persona != null) {
             chatState
         } else {
             lastChatState.value ?: chatState
         }
 
-        AnimatedVisibility(
-            visible = showChat,
-            enter = slideInHorizontally(
-                animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
-                initialOffsetX = { width -> width },
-            ) + fadeIn(animationSpec = tween(durationMillis = 160)),
-            exit = slideOutHorizontally(
-                animationSpec = tween(durationMillis = 260, easing = FastOutLinearInEasing),
-                targetOffsetX = { width -> width },
-            ) + fadeOut(animationSpec = tween(durationMillis = 140)),
-        ) {
-            ChatScreen(
-                state = renderState,
-                viewModel = chatViewModel,
-                speaking = speaking,
-                showReasoning = settings.showReasoning,
-                onBack = { chatViewModel.closeChat() },
-                onOpenSearch = {
-                    shellViewModel.navigate(AppScreen.Search(chatState.conversation?.id ?: 0L))
-                },
-                onOpenChatInfo = { shellViewModel.navigate(AppScreen.ChatInfo) },
-                onOpenSettings = { tab = HomeTab.SETTINGS },
-                // 它盖住了整个屏幕、也盖住了底部标签栏，所以没有别人替它让位，
-                // 键盘高度要完整由它自己吃掉喵。
-                reservedBottomInset = 0.dp,
-                imeBottomInset = imeBottom,
-            )
+        if (chatMounted) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        // 从右侧推入：progress 1 时归位，0 时整屏在右边喵。
+                        translationX = size.width * (1f - chatProgress.value)
+                    },
+            ) {
+                ChatScreen(
+                    state = renderState,
+                    viewModel = chatViewModel,
+                    speaking = speaking,
+                    showReasoning = settings.showReasoning,
+                    onBack = { chatViewModel.closeChat() },
+                    onOpenSearch = {
+                        shellViewModel.navigate(AppScreen.Search(chatState.conversation?.id ?: 0L))
+                    },
+                    onOpenChatInfo = { shellViewModel.navigate(AppScreen.ChatInfo) },
+                    onOpenSettings = { tab = HomeTab.SETTINGS },
+                    // 它已经盖住了整个屏幕（含底部标签栏），没有人替它让位，
+                    // 键盘与系统手势条都要由它自己避让喵。
+                    reservedBottomInset = 0.dp,
+                    imeBottomInset = imeBottom,
+                    systemBottomInset = systemBottom,
+                )
+            }
         }
     }
 }
