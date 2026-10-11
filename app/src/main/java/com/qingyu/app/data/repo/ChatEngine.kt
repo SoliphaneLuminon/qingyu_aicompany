@@ -8,10 +8,12 @@ import com.qingyu.app.core.memory.RefineSource
 import com.qingyu.app.core.memory.UtilityLlm
 import com.qingyu.app.data.AppSettings
 import com.qingyu.app.data.Attachment
+import com.qingyu.app.data.AttachmentKind
 import com.qingyu.app.data.ChatMessage
 import com.qingyu.app.data.Conversation
 import com.qingyu.app.data.Endpoints
 import com.qingyu.app.data.MemoryItem
+import com.qingyu.app.data.MessageKind
 import com.qingyu.app.data.MessageRole
 import com.qingyu.app.data.Persona
 import com.qingyu.app.data.SearchHit
@@ -33,6 +35,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import java.io.File
 
 /** 正在流式生成的内容。全部是内存态，不进数据库喵。 */
 data class ChatStreamState(
@@ -226,6 +229,11 @@ class ChatEngine(
      *
      * 描述会写回 attachments.description，所以同一张图只识别一次喵；
      * 对话历史里那条用户消息的内容也会被补上描述，模型才"看得见"当时发了什么喵。
+     *
+     * **表情包不走这条路**喵：它的语义已经由名字给定了（见 [PromptBuilder] 的
+     * renderHistoryContent），而识图模型的措辞每次都不完全一样。
+     * 让同一张表情每次都被重新描述，模型读到的就是三段不同的文字，
+     * 自然表现得像"每次都头一回见"喵——那正是"连发同一张表情反应一样"的根因喵。
      */
     private suspend fun describePendingImages(
         history: List<ChatMessage>,
@@ -233,7 +241,11 @@ class ChatEngine(
     ): List<ChatMessage> {
         val store = imageStore ?: return history
         val capable = settings.visionMainModelSupportsImages
-        val pending = history.filter { it.role == MessageRole.USER && it.attachments.any { it.description.isBlank() } }
+        val pending = history.filter {
+            it.role == MessageRole.USER &&
+                it.kind != MessageKind.STICKER &&
+                it.attachments.any { attachment -> attachment.description.isBlank() }
+        }
         if (pending.isEmpty()) return history
 
         // 主模型自己就能看图：不需要识别，图片会在发送时作为多模态内容带上喵。
@@ -356,6 +368,9 @@ class ChatEngine(
             describePendingImages(loaded, settings)
         }
 
+        // 这个角色能发哪些表情包：交给提示词，模型才知道自己可以发喵。
+        val stickerNames = runCatching { db.stickers.list().map { it.name } }.getOrDefault(emptyList())
+
         // 用户开启联网时先检索，把资料塞进系统提示词喵。
         val searchHits = if (searchRequested) runSearch(history) else emptyList()
         val searchContext = if (searchHits.isEmpty()) "" else {
@@ -385,6 +400,8 @@ class ChatEngine(
             historyLimit = settings.historyLimit,
             searchContext = searchContext,
             temporalHint = temporalHint,
+            // 把可用表情名交给提示词，模型才知道自己能发哪些喵。
+            stickerNames = stickerNames,
         ).let { base -> attachImagesForNativeVision(base, history, settings) }
 
         // 润色：超时或出错都自动降级为上面这版原生提示词，不会拖住生成喵。
@@ -453,7 +470,17 @@ class ChatEngine(
         val savedIds = ArrayList<Long>()
         val savedReplies = ArrayList<String>()
         val accumulator = BurstAccumulator { segment ->
-            val saved = persistBubble(conversationId, segment, savedReplies.size)
+            val persisted = persistBubble(conversationId, segment, savedReplies.size)
+            // 表情先上屏：时间戳排在文字之前也行，反正它们各是独立一条喵。
+            persisted.stickers.forEach { emit(ChatEvent.Saved(it)) }
+            val saved = persisted.bubble
+            // null 表示这一段只有表情、没有文字：表情已经发过 Saved 事件了，
+            // 这里不能再拿一条空文本去顶替它喵。
+            if (saved == null) {
+                // 段数仍要推进，否则下一段的时间戳会与这一段的挤在一起喵。
+                savedReplies.add("")
+                return@BurstAccumulator
+            }
             savedIds.add(saved.id)
             savedReplies.add(saved.text)
             state = state.copy(bubbles = state.bubbles + saved)
@@ -560,17 +587,89 @@ class ChatEngine(
         }
     }
 
-    /** 把一段成型文本写成一条助手消息喵。 */
-    private suspend fun persistBubble(conversationId: Long, text: String, order: Int): ChatStreamState.Bubble {        val message = ChatMessage(
-            conversationId = conversationId,
-            role = MessageRole.ASSISTANT,
-            content = text,
-            // 加 order 毫秒是为了保证同一批消息的先后顺序稳定喵
-            timestamp = TimeUtil.now() + order,
-        )
-        val id = messages.insert(message)
-        return ChatStreamState.Bubble(id = id, text = text, timestamp = message.timestamp)
+    /**
+     * 把一段成型文本写成助手消息喵。
+     *
+     * 这里顺手处理模型写的「发表情包」指令喵（见 [StickerDirective]）：
+     * 指令行从正文里剥掉，剩下的文字照常落成一条消息；
+     * 每个指令再单独落成一条**表情包消息**，与用户发的表情走同一套渲染喵。
+     *
+     * 顺序是"先文字后表情"喵：模型通常是"说完一句话，顺手配个表情"，
+     * 反过来会显得表情孤零零地抢在话前面喵。
+     *
+     * 本函数不 emit——它不是 flow 作用域里的代码，拿不到 `emit` 喵。
+     * 落好的表情消息随返回值交给调用方去发事件喵。
+     *
+     * @return 本段的结果：文字气泡（可能为 null，表示整段只有表情）
+     *   与已落库的表情消息喵
+     */
+    private suspend fun persistBubble(
+        conversationId: Long,
+        text: String,
+        order: Int,
+    ): PersistedSegment {
+        val available = runCatching { db.stickers.list() }.getOrDefault(emptyList())
+        val parsed = StickerDirective.parse(text, available.map { it.name }.toSet())
+
+        // 表情的时间戳排在文字之后，列表按时间戳排序就自然是"先话后表情"喵。
+        val stickers = parsed.stickerNames.mapIndexedNotNull { index, name ->
+            val sticker = available.firstOrNull { it.name == name } ?: return@mapIndexedNotNull null
+            val timestamp = TimeUtil.now() + order + index + 1
+            val message = ChatMessage(
+                conversationId = conversationId,
+                role = MessageRole.ASSISTANT,
+                // 正文仍是名字：与用户发的表情保持同一套约定，
+                // 提示词里再统一渲染成「（对方发来一个表情包：名字）」喵。
+                content = sticker.name,
+                timestamp = timestamp,
+                kind = MessageKind.STICKER,
+                stickerId = sticker.id,
+            )
+            val id = messages.insert(message)
+            db.attachments.attachToMessage(
+                messageId = id,
+                attachments = listOf(
+                    Attachment(
+                        messageId = id,
+                        conversationId = conversationId,
+                        kind = AttachmentKind.IMAGE,
+                        localPath = sticker.filePath,
+                        mimeType = sticker.mimeType,
+                        width = sticker.width,
+                        height = sticker.height,
+                        sizeBytes = runCatching { File(sticker.filePath).length() }.getOrDefault(0L),
+                        createdAt = timestamp,
+                    ),
+                ),
+            )
+            db.stickers.markUsed(sticker.id)
+            message.copy(id = id)
+        }
+
+        val bodyText = parsed.text
+        // 整段只有表情、没有文字时返回 null 气泡：
+        // 若返回一条空文本气泡，调用方会拿它发 Saved，带着表情的 id 把表情覆盖成空白喵。
+        val bubble = if (bodyText.isBlank()) {
+            null
+        } else {
+            val message = ChatMessage(
+                conversationId = conversationId,
+                role = MessageRole.ASSISTANT,
+                content = bodyText,
+                // 加 order 毫秒是为了保证同一批消息的先后顺序稳定喵
+                timestamp = TimeUtil.now() + order,
+            )
+            val id = messages.insert(message)
+            ChatStreamState.Bubble(id = id, text = bodyText, timestamp = message.timestamp)
+        }
+        return PersistedSegment(bubble = bubble, stickers = stickers)
     }
+
+    /** [persistBubble] 的产出喵。 */
+    private data class PersistedSegment(
+        val bubble: ChatStreamState.Bubble?,
+        val stickers: List<ChatMessage>,
+    )
 
     private fun ChatStreamState.Bubble.toMessage(conversationId: Long) = ChatMessage(
         id = id,
