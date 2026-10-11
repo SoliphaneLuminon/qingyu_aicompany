@@ -8,11 +8,15 @@ import com.qingyu.app.data.repo.ConversationRepository
 import com.qingyu.app.data.repo.MemoryDirector
 import com.qingyu.app.data.repo.MemoryExtractionService
 import com.qingyu.app.data.repo.MemoryTidyService
+import com.qingyu.app.data.repo.StickerRepository
 import com.qingyu.app.data.archive.ChatArchive
+import com.qingyu.app.media.AudioRecorder
+import com.qingyu.app.media.AvatarStore
 import com.qingyu.app.media.ImageStore
 import com.qingyu.app.remote.ChatClient
 import com.qingyu.app.remote.SearchClient
 import com.qingyu.app.remote.SpeechClient
+import com.qingyu.app.remote.TranscriptionClient
 import com.qingyu.app.remote.UtilityLlmClient
 import com.qingyu.app.remote.VisionClient
 import com.qingyu.app.tts.SpeechPlayer
@@ -43,6 +47,9 @@ class AppContainer(context: Context) {
     val speechClient: SpeechClient by lazy { SpeechClient() }
     val visionClient: VisionClient by lazy { VisionClient(chatClient) }
     val imageStore: ImageStore by lazy { ImageStore(appContext) }
+    val avatarStore: AvatarStore by lazy { AvatarStore(appContext) }
+    val audioRecorder: AudioRecorder by lazy { AudioRecorder(appContext) }
+    val transcription: TranscriptionClient by lazy { TranscriptionClient() }
     val utilityLlm: UtilityLlmClient by lazy { UtilityLlmClient(chatClient) }
     val memoryDirector: MemoryDirector by lazy { MemoryDirector(database) }
     val memoryExtraction: MemoryExtractionService by lazy { MemoryExtractionService(database, utilityLlm) }
@@ -63,6 +70,7 @@ class AppContainer(context: Context) {
         )
     }
     val conversations: ConversationRepository by lazy { ConversationRepository(database) }
+    val stickers: StickerRepository by lazy { StickerRepository(appContext, database) }
     val archive: ChatArchive by lazy { ChatArchive(appContext, database) }
     val tts: TextToSpeechEngine by lazy { TextToSpeechEngine(appContext) }
     val speech: SpeechPlayer by lazy { SpeechPlayer(appContext, speechClient, settings) }
