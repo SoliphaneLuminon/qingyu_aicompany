@@ -30,6 +30,10 @@ class ConversationRepository(private val db: QingYuDatabase) {
     /** 某个角色的那段对话，含被移除的（通讯录与资料页要看它）喵。 */
     suspend fun conversationOf(personaId: Long): Conversation? = db.conversations.of(personaId)
 
+    /** 置顶 / 取消置顶某段对话喵。 */
+    suspend fun setPinned(conversationId: Long, pinned: Boolean) =
+        db.conversations.setPinned(conversationId, pinned)
+
     suspend fun list(): List<Conversation> = db.conversations.list()
 
     suspend fun messages(conversationId: Long): List<ChatMessage> = db.messages.list(conversationId)
@@ -123,7 +127,9 @@ class ConversationRepository(private val db: QingYuDatabase) {
  * - **先取该角色最近的那段对话，再看它是否被移除**，而不是先滤掉被移除的再挑喵。
  *   顺序反了的话，一段对话被"删除"后，更早的残留对话会顶上来，
  *   看起来就像删除没生效喵
- * - 排序照微信：最近说过的排最前喵
+ * - 排序：**置顶的永远在最前**，置顶组内与普通组内都按最近说过排喵。
+ *   这一步必须在这里做——`listVisible()` 里虽然也有 `ORDER BY pinned DESC`，
+ *   但下面这次内存排序会把它整个盖掉；只靠 SQL 的话置顶根本不会生效喵
  */
 internal fun buildChatList(
     personas: List<com.qingyu.app.data.Persona>,
@@ -139,5 +145,9 @@ internal fun buildChatList(
             if (entry.neverChatted) return@mapNotNull null
             entry
         }
-        .sortedByDescending { it.sortTime }
+        .sortedWith(
+            // 先按置顶，再按最近活动——两级排序写在一起，避免"两次排序互相覆盖"喵。
+            compareByDescending<ChatListEntry> { it.conversation?.pinned == true }
+                .thenByDescending { it.sortTime },
+        )
 }
