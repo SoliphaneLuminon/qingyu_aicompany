@@ -2,6 +2,7 @@ package com.qingyu.app
 
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -13,11 +14,39 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import com.qingyu.app.data.ThemeMode
+import com.qingyu.app.notify.ReplyNotifier
 import com.qingyu.app.ui.QingYuAppRoot
 import com.qingyu.app.ui.theme.QingYuTheme
+import kotlinx.coroutines.flow.MutableStateFlow
 
 /** 唯一 Activity。启动后装配 [AppContainer]、套上微信主题，再进入 [QingYuAppRoot喵]。 */
 class MainActivity : ComponentActivity() {
+
+    /**
+     * 从通知点进来时"要打开哪个角色"喵。
+     *
+     * 用 StateFlow 而不是直接把 intent 传给 Compose 喵：通知可以在 Activity
+     * **已经活着**的时候被点（走 [onNewIntent]），那时 Compose 早就组合完了，
+     * 光读一次 `intent` 是拿不到新值的喵。
+     */
+    private val pendingPersonaId = MutableStateFlow<Long?>(null)
+
+    /** 通知里带的角色 id；没有就返回 null喵。 */
+    private fun personaIdFrom(intent: Intent?): Long? =
+        intent?.getLongExtra(ReplyNotifier.EXTRA_PERSONA_ID, -1L)?.takeIf { it > 0L }
+
+    /**
+     * 已经活着时又被通知点开喵。
+     *
+     * 因为清单里把 launchMode 设成了 singleTask，系统会复用当前实例、
+     * 把新的 Intent 送到这里，而不是再叠一个 Activity 喵。
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // 必须 setIntent，否则后续 getIntent() 拿到的还是旧的喵。
+        setIntent(intent)
+        personaIdFrom(intent)?.let { pendingPersonaId.value = it }
+    }
 
     @RequiresApi(Build.VERSION_CODES.Q)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -65,7 +94,10 @@ class MainActivity : ComponentActivity() {
             QingYuTheme(
                 themeMode = settings.themeMode,
             ) {
-                QingYuAppRoot(container = container)
+                QingYuAppRoot(
+                    container = container,
+                    pendingPersonaId = pendingPersonaId,
+                )
             }
         }
     }
