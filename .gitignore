@@ -17,3 +17,6 @@ local.properties
 # 本地自用签名口令，不要进版本库
 keystore.properties
 keystore/
+# 签名密钥本体也绝不能进版本库：一旦推上公开仓库，任何人都能用它冒充你发版
+*.jks
+*.keystore
