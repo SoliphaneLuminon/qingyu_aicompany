@@ -71,11 +71,13 @@ import com.qingyu.app.ui.theme.LocalDarkTheme
 import com.qingyu.app.ui.theme.QyBottomBarDark
 import com.qingyu.app.ui.theme.QyBottomBarLight
 import com.qingyu.app.ui.vm.AppScreen
+import com.qingyu.app.ui.vm.BackAction
 import com.qingyu.app.ui.vm.ChatUiState
 import com.qingyu.app.ui.vm.ChatViewModel
 import com.qingyu.app.ui.vm.DataViewModel
 import com.qingyu.app.ui.vm.PersonasViewModel
 import com.qingyu.app.ui.vm.ShellViewModel
+import com.qingyu.app.ui.vm.decideBackAction
 
 /**
  * 底部标签喵。
@@ -287,8 +289,27 @@ fun QingYuAppRoot(container: AppContainer) {
         ?: chatState.allPersonas.firstOrNull()?.id
         ?: 0L
 
-    // 系统返回键：在对话里就退回列表，而不是直接退出应用喵。
-    BackHandler(enabled = inChat) { chatViewModel.closeChat() }
+    // 系统返回键的层级喵。
+    //
+    // 这里**只在最外层注册一个** BackHandler，按 decideBackAction 逐层退，
+    // 而不是每屏各注册一个：多层 BackHandler 靠组合顺序决定谁生效，
+    // 一旦某屏忘记注册就会直接退出应用——那正是"点返回就退出"的来源喵。
+    //
+    // enabled 在最后一层（无处可退）时为 false，把返回键交还系统去退出应用喵。
+    val backAction = decideBackAction(
+        screen = shellState.screen,
+        inChat = inChat,
+        tabIsHome = tab == HomeTab.HOME,
+    )
+    BackHandler(enabled = backAction != BackAction.EXIT) {
+        when (backAction) {
+            BackAction.POP_SCREEN -> shellViewModel.back()
+            BackAction.CLOSE_CHAT -> chatViewModel.closeChat()
+            BackAction.GO_HOME_TAB -> tab = HomeTab.HOME
+            // enabled 已经挡掉了，这里只是把 when 补全喵。
+            BackAction.EXIT -> Unit
+        }
+    }
 
     // 回到列表这一屏时重算一次列表，保证预览与排序是最新的喵。
     LaunchedEffect(inChat, tab) {
@@ -426,11 +447,13 @@ fun QingYuAppRoot(container: AppContainer) {
                         onOpenMemory = {
                             chatViewModel.closeChat()
                             tab = HomeTab.MEMORY
-                            back()
+                            // 记忆是标签页，不是这条钻取链路的下一层，所以一路退回喵。
+                            shellViewModel.backToTabs()
                         },
                         onHideChat = {
                             chatViewModel.hideCurrentChat()
-                            back()
+                            // 对话已经关了，聊天信息页留着没有意义，一路退回标签页喵。
+                            shellViewModel.backToTabs()
                         },
                         onClearMessages = { chatViewModel.clearCurrentMessages() },
                     )
@@ -452,12 +475,15 @@ fun QingYuAppRoot(container: AppContainer) {
                         onOpenChat = {
                             chatViewModel.openPersona(persona)
                             tab = HomeTab.HOME
-                            back()
+                            // 这里要**一路退回标签页**而不是退一层喵：
+                            // 进对话之后资料页已经被盖住了，再退一层会退到资料页，
+                            // 而用户的心理预期是"我在跟这个人聊天，返回就回聊天列表"喵。
+                            shellViewModel.backToTabs()
                         },
                         onEdit = { personaEditor.edit(persona) },                        onOpenMemory = {
                             chatViewModel.closeChat()
                             tab = HomeTab.MEMORY
-                            back()
+                            shellViewModel.backToTabs()
                         },
                         onDelete = { personaEditor.askDelete(persona) },
                     )
