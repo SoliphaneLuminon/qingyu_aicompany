@@ -1,6 +1,5 @@
 package com.qingyu.app.data.db
 
-import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
@@ -51,7 +50,7 @@ object Db {
      *   用单独一列而不是塞进 content 里做前缀标记，是因为前缀会污染送给模型的文本，
      *   而且用户手打的字里出现同样的前缀就会误判喵。
      */
-    const val VERSION = 8
+    const val VERSION = 10
 }
 
 class DbHelper(context: Context) : SQLiteOpenHelper(context.applicationContext, Db.NAME, null, Db.VERSION) {
@@ -106,6 +105,28 @@ class DbHelper(context: Context) : SQLiteOpenHelper(context.applicationContext, 
             db.execSQL("ALTER TABLE messages ADD COLUMN sticker_id INTEGER NOT NULL DEFAULT 0")
             db.execSQL("ALTER TABLE messages ADD COLUMN payload TEXT NOT NULL DEFAULT ''")
             createStickers(db)
+        }
+        if (oldVersion < 9) {
+            // v8 -> v9：把附件的会话归属按它挂在哪条消息上回填一次喵。
+            //
+            // 用户发的图片曾经"发出时看得见、消息一刷新就没了"：图片导入得比
+            // "发给哪段对话"更早，那一行的 conversation_id 落成了 0，
+            // 而读历史时是按 conversation_id 查附件的——查不到就等于这条消息没有图喵。
+            // 修好写入侧之后，这里把**已经丢掉的图找回来**喵。
+            db.execSQL(
+                "UPDATE attachments SET conversation_id = " +
+                    "(SELECT conversation_id FROM messages WHERE messages.id = attachments.message_id) " +
+                    "WHERE conversation_id = 0 AND message_id > 0",
+            )
+        }
+        if (oldVersion < 10) {
+            // v9 -> v10：给会话加"未读条数"喵。
+            //
+            // **这一列必须在两个地方都出现**喵：这里是老库的升级路径，
+            // 而 `createConversations` 里那份 CREATE TABLE 是新装用户的路径喵。
+            // 只写一边的后果很具体：新装用户的表里没有这一列，
+            // 而读会话时**每一行都会读它**——直接崩在启动，且只有新装的人会中喵。
+            db.execSQL("ALTER TABLE conversations ADD COLUMN unread_count INTEGER NOT NULL DEFAULT 0")
         }
     }
 
@@ -179,7 +200,8 @@ class DbHelper(context: Context) : SQLiteOpenHelper(context.applicationContext, 
                 last_preview TEXT NOT NULL DEFAULT '',
                 message_count INTEGER NOT NULL DEFAULT 0,
                 pinned INTEGER NOT NULL DEFAULT 0,
-                hidden INTEGER NOT NULL DEFAULT 0
+                hidden INTEGER NOT NULL DEFAULT 0,
+                unread_count INTEGER NOT NULL DEFAULT 0
             )
             """.trimIndent(),
         )
