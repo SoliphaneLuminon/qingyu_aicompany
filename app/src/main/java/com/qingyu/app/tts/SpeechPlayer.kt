@@ -156,18 +156,6 @@ class SpeechPlayer(
         _state.value = SpeechState()
     }
 
-    fun clearError() {
-        _state.value = _state.value.copy(error = null)
-    }
-
-    /** 清空音频缓存喵。 */
-    fun clearCache(): Int {
-        val files = cacheDir.listFiles().orEmpty()
-        var removed = 0
-        files.forEach { if (runCatching { it.delete() }.getOrDefault(false)) removed++ }
-        return removed
-    }
-
     fun shutdown() {
         stop()
         systemTts.shutdown()
