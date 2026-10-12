@@ -39,6 +39,7 @@ import com.qingyu.app.data.AppSettings
 import com.qingyu.app.data.MemoryItem
 import com.qingyu.app.data.MessageRole
 import com.qingyu.app.data.Persona
+import com.qingyu.app.data.repo.ContextSnapshot
 import com.qingyu.app.remote.PromptBuilder
 import com.qingyu.app.ui.vm.ChatUiState
 
@@ -75,7 +76,7 @@ fun DebugScreen(state: ChatUiState, onBack: () -> Unit, modifier: Modifier = Mod
 
     // 只在没有留档时才重算。remember 依然无条件调用，靠 key 里的 snapshot 决定要不要干活喵，
     // 免得 snapshot 由 null 变非 null 时改变组合结构喵。
-    val previewText = remember(
+    val previewSnapshot = remember(
         snapshot,
         persona?.id,
         conversationId,
@@ -92,15 +93,22 @@ fun DebugScreen(state: ChatUiState, onBack: () -> Unit, modifier: Modifier = Mod
         settings.memoryTemporalEnabled,
     ) {
         if (snapshot != null) {
-            PromptBuilder.preview(snapshot.turns)
+            null
         } else {
             previewWithoutSnapshot(container, state, persona, conversationId, lastUserText, settings)
         }
     }
 
-    val injectedMemories = snapshot?.memories.orEmpty()
-    val decisions = snapshot?.decisions.orEmpty()
-    val temporalHint = snapshot?.temporalHint
+    // **留档优先，没有留档就用预览顶替整页**喵。
+    // 这里原本只看 snapshot，于是没发过请求时「注入记忆」永远显示"本轮没有"、
+    // 而「唤醒判定」整段被隐藏（它是 decisions 非空才画的）——
+    // 用户看到的是"记忆根本没注入、也没有唤醒判定"，而真相只是**没显示**喵。
+    // 预览那一趟本来就算出了记忆与判定，只是被丢掉了，这里把它接回来喵。
+    val shown = snapshot ?: previewSnapshot
+    val previewText = shown?.let { PromptBuilder.preview(it.turns) }.orEmpty()
+    val injectedMemories = shown?.memories.orEmpty()
+    val decisions = shown?.decisions.orEmpty()
+    val temporalHint = shown?.temporalHint
         ?: if (settings.memoryTemporalEnabled) "（预览模式，见下方提示词）" else ""
 
     Scaffold(
@@ -251,6 +259,11 @@ fun DebugScreen(state: ChatUiState, onBack: () -> Unit, modifier: Modifier = Mod
  *
  * 和真实那一轮共用同一套检索/唤醒规则，但**一步都不写库**喵，
  * 所以结果只能当参考——页面上也如实标注成"预览"喵。
+ *
+ * 它返回的是**整份留档**而不只是提示词文本喵：这一趟本来就算出了
+ * 注入的记忆与唤醒判定，丢掉它们会让页面看起来像"记忆根本没注入"喵。
+ * 而且只能算**一次**——按概率唤醒的规则重算一遍可能选中另一批，
+ * 那样页面上的"注入记忆"就和它旁边那份提示词对不上了喵。
  */
 private fun previewWithoutSnapshot(
     container: AppContainer,
@@ -259,8 +272,8 @@ private fun previewWithoutSnapshot(
     conversationId: Long,
     lastUserText: String,
     settings: AppSettings,
-): String {
-    if (persona == null) return "还没有选择角色"
+): ContextSnapshot? {
+    if (persona == null) return null
     val memoryContext = kotlinx.coroutines.runBlocking {
         container.memoryDirector.preview(persona.id, conversationId, lastUserText, settings)
     }
@@ -273,7 +286,12 @@ private fun previewWithoutSnapshot(
         historyLimit = settings.historyLimit,
         temporalHint = memoryContext.temporal.hint(),
     )
-    return PromptBuilder.preview(turns)
+    return ContextSnapshot(
+        turns = turns,
+        memories = memoryContext.memories,
+        decisions = memoryContext.decisions,
+        temporalHint = memoryContext.temporal.hint(),
+    )
 }
 
 /** 标题小节喵。 */
