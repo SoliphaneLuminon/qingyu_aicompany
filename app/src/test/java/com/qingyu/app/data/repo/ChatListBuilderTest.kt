@@ -3,8 +3,6 @@ package com.qingyu.app.data.repo
 import com.qingyu.app.data.Conversation
 import com.qingyu.app.data.Persona
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
