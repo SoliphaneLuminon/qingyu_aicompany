@@ -675,7 +675,11 @@ class ChatEngine(
         // 挡掉"只是个标识符"的行喵（见 [GarbledReply]）：有用户反馈过偶尔收到一条
         // 长得像 UUID 的"回复"，而全项目都不生成这种串，它来自模型/网关那边喵。
         // 拿不到原始响应就无法根治，但这类内容一律是垃圾，落库前清掉用户至少不会看到乱码喵。
-        val bodyText = GarbledReply.stripOpaqueLines(parsed.text)
+        //
+        // 再清一遍"被抄回来的系统旁注"喵（见 [ReplySanitizer]）：模型有时会照着
+        // 上下文里那些括号标注抄一行回过来，甚至把模板占位符「表情包名字」原样带出来喵。
+        // 两道清洗串起来跑：乱码先走，剩下的再判旁注喵。
+        val bodyText = ReplySanitizer.sanitize(GarbledReply.stripOpaqueLines(parsed.text))
         // 整段只有表情、没有文字时返回 null 气泡：
         // 若返回一条空文本气泡，调用方会拿它发 Saved，带着表情的 id 把表情覆盖成空白喵。
         // 清掉乱码后剩下的也是空，同样按"没有文字"处理喵。
