@@ -8,10 +8,10 @@ import android.provider.MediaStore
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonObject
+import com.qingyu.app.core.SafeRead
 import com.qingyu.app.core.TimeUtil
 import com.qingyu.app.data.ChatMessage
 import com.qingyu.app.data.Favorite
-import com.qingyu.app.data.MessageRole
 import com.qingyu.app.data.Persona
 import com.qingyu.app.data.db.QingYuDatabase
 
@@ -65,30 +65,6 @@ class ChatArchive(private val context: Context, private val db: QingYuDatabase) 
         return writeToDownloads(fileName, gson.toJson(root))
     }
 
-    /** 导出为人类可读的纯文本，方便直接发给别人或贴进笔记喵。 */
-    suspend fun exportConversationAsText(conversationId: Long): Uri? {
-        val conversation = db.conversations.get(conversationId) ?: return null
-        val persona = db.personas.get(conversation.personaId)
-        val personaName = persona?.name ?: "对方"
-        val messages = db.messages.list(conversationId)
-        val text = buildString {
-            appendLine("# ${conversation.title}")
-            appendLine()
-            appendLine("导出时间：${TimeUtil.smart(TimeUtil.now())}")
-            appendLine()
-            appendLine("---")
-            appendLine()
-            messages.filter { it.role != MessageRole.REASONING }.forEach { message ->
-                val speaker = if (message.role == MessageRole.USER) "我" else personaName
-                appendLine("$speaker（${TimeUtil.smart(message.timestamp)}）")
-                appendLine(message.content)
-                appendLine()
-            }
-        }
-        val safeName = sanitizeFileName(personaName)
-        return writeToDownloads("聊天记录_${safeName}_${TimeUtil.fileStamp()}.md", text)
-    }
-
     /** 导出任意纯文本（收藏条目、单条消息等喵）。 */
     fun exportPlainText(fileName: String, content: String): Uri? {
         val base = fileName.substringBeforeLast('.', fileName)
@@ -111,7 +87,10 @@ class ChatArchive(private val context: Context, private val db: QingYuDatabase) 
      * @param personaId 指定导入到哪个角色；为 0 时按文件里的角色名新建/复用角色喵。
      */
     suspend fun import(uri: Uri, personaId: Long = 0L): ImportResult {
-        val raw = context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
+        // 带上限读喵（见 [SafeRead]）：这是个别人可以随便塞给你的文件，
+        // 一次性 readBytes 会让一个超大 JSON 直接把应用撑爆喵。
+        val raw = context.contentResolver.openInputStream(uri)
+            ?.use { SafeRead.readCapped(it).toString(Charsets.UTF_8) }
             ?: error("无法读取该文件")
         val displayName = queryDisplayName(uri) ?: uri.lastPathSegment
         return importFromJson(raw, displayName, personaId)
