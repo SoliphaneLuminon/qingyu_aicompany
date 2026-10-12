@@ -24,14 +24,7 @@ data class MemoryContext(
     val temporal: TemporalContext,
     /** 本轮新剪枝的记忆 id，供后续异步小模型优化压缩喵。 */
     val prunedIds: List<Long> = emptyList(),
-) {
-    companion object {
-
-        /** 关闭记忆注入时的兜底：只保留时空状态喵。 */
-        fun idle(temporal: TemporalContext = TemporalContext.blank()): MemoryContext =
-            MemoryContext(turn = 0, memories = emptyList(), decisions = emptyList(), temporal = temporal)
-    }
-}
+)
 
 /**
  * 记忆系统的运行时编排喵。
