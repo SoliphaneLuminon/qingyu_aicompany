@@ -346,14 +346,19 @@ fun MessageRow(
                             menuOpen = false
                         },
                     )
-                    DropdownMenuItem(
-                        text = { Text("重新生成") },
-                        leadingIcon = { Icon(Icons.Outlined.Refresh, null) },
-                        onClick = {
-                            onRegenerate()
-                            menuOpen = false
-                        },
-                    )
+                    // 只有真落过库的消息才给「重新生成」喵：流式过程中那条乐观气泡的 id 是 -1，
+                    // 拿它去重新生成，引擎查不到目标就不会删旧内容，于是**再生成一条**
+                    // ——用户拿到的是两条回复，而不是把原来那条换掉喵。
+                    if (message.id > 0) {
+                        DropdownMenuItem(
+                            text = { Text("重新生成") },
+                            leadingIcon = { Icon(Icons.Outlined.Refresh, null) },
+                            onClick = {
+                                onRegenerate()
+                                menuOpen = false
+                            },
+                        )
+                    }
                 }
                 if (message.role != MessageRole.REASONING) {
                     DropdownMenuItem(
