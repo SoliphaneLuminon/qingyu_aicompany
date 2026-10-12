@@ -679,7 +679,14 @@ class ChatEngine(
         // 再清一遍"被抄回来的系统旁注"喵（见 [ReplySanitizer]）：模型有时会照着
         // 上下文里那些括号标注抄一行回过来，甚至把模板占位符「表情包名字」原样带出来喵。
         // 两道清洗串起来跑：乱码先走，剩下的再判旁注喵。
-        val bodyText = ReplySanitizer.sanitize(GarbledReply.stripOpaqueLines(parsed.text))
+        // 三道清洗串起来跑，顺序有讲究喵：
+        // 1. 先剥乱码——它连标点都没有，后面两步对它没意义；
+        // 2. 再判系统旁注——它按"整行"判，得趁标点还没被动过；
+        // 3. 最后补逗号（见 [CommaRepair]）——它只处理"完全没标点的片段"，
+        //    所以必须放在把指令与旁注都抠走之后，否则会往那些字段里插逗号喵。
+        val bodyText = CommaRepair.repair(
+            ReplySanitizer.sanitize(GarbledReply.stripOpaqueLines(parsed.text)),
+        )
         // 整段只有表情、没有文字时返回 null 气泡：
         // 若返回一条空文本气泡，调用方会拿它发 Saved，带着表情的 id 把表情覆盖成空白喵。
         // 清掉乱码后剩下的也是空，同样按"没有文字"处理喵。
