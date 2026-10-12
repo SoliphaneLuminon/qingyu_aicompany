@@ -23,6 +23,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +39,38 @@ import androidx.compose.ui.window.DialogProperties
 import com.qingyu.app.data.Attachment
 import com.qingyu.app.data.SearchHit
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+/**
+ * 在**后台线程**解码一张本地图；还没解好时返回 null，调用方先画占位喵。
+ *
+ * 原来两处图都是在 composition 里直接 `BitmapFactory.decodeFile` 喵。
+ * `remember` 只保证"同一张图不重复解"，**第一次那一解仍然发生在主线程上**——
+ * 点进一段带图的对话时，可视区每张图都要在主线程上读文件、采样、缩放，
+ * 几十毫秒乘以张数，掉帧就是这么来的喵。
+ *
+ * 放到 IO 线程之后，主线程只负责把已经解好的位图画上去喵。
+ * 结果依然是 remember 住的（produceState 按 key 缓存），滚动来回不会重复解码喵。
+ */
+@Composable
+private fun rememberDecodedBitmap(
+    path: String,
+    key: Any?,
+    full: Boolean,
+): ImageBitmap? {
+    val decoded by produceState<ImageBitmap?>(
+        initialValue = null,
+        key1 = key,
+        key2 = path,
+        key3 = full,
+    ) {
+        value = withContext(Dispatchers.IO) {
+            if (full) decodeFull(path) else decodeSampled(path)
+        }
+    }
+    return decoded
+}
 
 /**
  * 图片缩略图喵。
@@ -52,9 +86,7 @@ fun AttachmentThumbnail(
     attachment: Attachment,
     modifier: Modifier = Modifier,
 ) {
-    val bitmap = remember(attachment.id, attachment.localPath) {
-        decodeSampled(attachment.localPath)
-    }
+    val bitmap = rememberDecodedBitmap(attachment.localPath, attachment.id, full = false)
     if (bitmap == null) {
         Box(
             modifier = modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh),
@@ -123,7 +155,7 @@ fun ImageViewerDialog(attachment: Attachment, onDismiss: () -> Unit) {
                 .clickable(onClick = onDismiss),
             contentAlignment = Alignment.Center,
         ) {
-            val bitmap = remember(attachment.id) { decodeFull(attachment.localPath) }
+            val bitmap = rememberDecodedBitmap(attachment.localPath, attachment.id, full = true)
             if (bitmap != null) {
                 Image(
                     bitmap = bitmap,
