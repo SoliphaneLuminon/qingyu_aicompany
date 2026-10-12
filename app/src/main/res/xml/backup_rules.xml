@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?><!--
-   Sample backup rules file; uncomment and customize as necessary.
-   See https://developer.android.com/guide/topics/data/autobackup
-   for details.
-   Note: This file is ignored for devices older than API 31
-   See https://developer.android.com/about/versions/12/backup-restore
+  备份规则喵。
+
+  **为什么必须排掉设置文件**喵：接口地址与 API Key 都存在
+  `shared_prefs/qingyu_settings.xml` 里（明文，见 Settings.kt），
+  而 Android 的自动备份默认会把 shared_prefs 一起传上云喵。
+  那等于把用户的长效密钥复制进他的云盘备份、并通过设备迁移传到新手机——
+  用户完全不知道这件事发生过喵。
+
+  所以这里明确把设置文件排除掉：备份可以丢，密钥不能跟着走喵。
 -->
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <exclude domain="sharedpref" path="qingyu_settings.xml" />
 </full-backup-content>
