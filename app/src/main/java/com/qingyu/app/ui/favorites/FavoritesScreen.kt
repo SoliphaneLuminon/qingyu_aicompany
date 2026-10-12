@@ -56,7 +56,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.qingyu.app.AppContainer
 import com.qingyu.app.core.TimeUtil
 import com.qingyu.app.data.Favorite
 import com.qingyu.app.data.FavoriteKind
@@ -73,7 +72,6 @@ import com.qingyu.app.ui.vm.FavoritesViewModel
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FavoritesScreen(
-    container: AppContainer,
     personaId: Long,
     modifier: Modifier = Modifier,
 ) {
