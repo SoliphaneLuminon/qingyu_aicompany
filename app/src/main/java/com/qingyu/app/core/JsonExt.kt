@@ -21,9 +21,6 @@ fun JSONObject.textOrEmpty(key: String): String {
     return if (value.equals("null", ignoreCase = true)) "" else value
 }
 
-/** 同上，但把"没有内容"折叠成 null，方便配合 `?:` 使用喵。 */
-fun JSONObject.textOrNull(key: String): String? = textOrEmpty(key).takeIf { it.isNotEmpty() }
-
 /** 数组里按位取字符串，null 元素算空串喵。 */
 fun JSONArray.textOrEmpty(index: Int): String {
     if (index < 0 || index >= length() || isNull(index)) return ""
