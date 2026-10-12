@@ -1,19 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?><!--
-   Sample data extraction rules file; uncomment and customize as necessary.
-   See https://developer.android.com/about/versions/12/backup-restore#xml-changes
-   for details.
+  数据提取规则（Android 12+ 的云备份与设备迁移）喵。
+
+  **云备份**要排掉设置文件喵：那里面是明文的 API Key，
+  上传到云端备份等于把长效密钥交出去，用户既看不到也不知道喵。
+
+  **设备迁移**刻意**不排**喵：迁移是用户自己在新旧手机之间主动发起的、
+  两台设备都在他手上，而换机时丢掉配置反而逼他重新填一遍 Key喵。
+  这是有意的区别对待，不是漏了喵。
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <exclude domain="sharedpref" path="qingyu_settings.xml" />
     </cloud-backup>
-    <!--
-    <device-transfer>
-        <include .../>
-        <exclude .../>
-    </device-transfer>
-    -->
 </data-extraction-rules>
