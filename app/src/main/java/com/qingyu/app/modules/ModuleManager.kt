@@ -75,7 +75,17 @@ class ModuleManager(private val context: Context) {
             val id = json.textOrEmpty("id").ifBlank { json.textOrEmpty("name") }
             if (id.isBlank()) error("manifest.json 里必须要有 id")
             val entry = json.textOrEmpty("entry").ifBlank { "index.js" }
-            if (!File(staging, entry).exists()) error("找不到入口文件 $entry")
+            // **入口也要做路径校验**喵：unzip 挡住了压缩包里的 zip-slip，
+            // 但 `entry` 是 manifest 里另写的一个字符串，可以写成
+            // `../../../shared_prefs/qingyu_settings.xml` 去读应用私有文件喵。
+            // 所以和 unzip 用同一套判据：解析成绝对路径后必须真的落在模块目录里，
+            // 而且必须是个**文件**（目录会让后面 readText 直接抛异常）喵。
+            val entryFile = File(staging, entry)
+            val stagingPath = staging.canonicalPath
+            if (!entryFile.canonicalPath.startsWith("$stagingPath${File.separator}")) {
+                error("入口文件必须放在模块目录里：$entry")
+            }
+            if (!entryFile.isFile) error("找不到入口文件 $entry")
 
             // 目录名只允许字母数字与下划线，避免路径穿越喵
             val safeId = id.replace(Regex("[^A-Za-z0-9_\\-]"), "_")
@@ -146,7 +156,10 @@ class ModuleManager(private val context: Context) {
     suspend fun run(manifest: ModuleManifest, host: ModuleHost, input: String = ""): ModuleRunResult =
         withContext(Dispatchers.IO) {
             val entryFile = File(manifest.directory, manifest.entry)
-            if (!entryFile.exists()) return@withContext ModuleRunResult(false, "入口文件不见了")
+            // **isFile 而不是 exists** 喵：`exists` 对目录也返回 true，
+            // 于是一个把入口写成目录的恶意模块会让 readText 抛异常——
+            // 而这条异常没有任何一层接住，会直接崩掉整个应用喵。
+            if (!entryFile.isFile) return@withContext ModuleRunResult(false, "入口文件不见了")
             val code = entryFile.readText(Charsets.UTF_8)
             val console = StringBuilder()
             val bridge = JsBridge(host, console)
@@ -213,29 +226,66 @@ class ModuleManager(private val context: Context) {
         directory = textOrEmpty("directory"),
     )
 
-    /** 防 zip-slip：条目路径必须落在目标目录内喵。 */
+    /**
+     * 解包喵。三层防护缺一不可喵：
+     * 1. **条目路径必须落在目标目录内**（防 zip-slip）；
+     * 2. **条目数上限** [MAX_ENTRIES]；
+     * 3. **解压后的实际字节上限**：单条 [MAX_ENTRY_BYTES]、整包 [MAX_TOTAL_BYTES]喵。
+     *
+     * 第 3 条是补上的喵：原先只限了条目数，于是"几百个高度可压缩条目"能解出上 GB
+     * 数据、把应用私有目录塞满——而内部存储是整机共享的，会连累别的应用喵。
+     *
+     * 判据用**实际读出的字节**，不看 `entry.size`喵：那是压缩包头里攻击者可以随便填的
+     * 声明值，正是 zip bomb 用来骗人的字段喵。
+     */
     private fun unzip(input: InputStream, target: File) {
+        val targetPath = target.canonicalPath
+        var total = 0L
         ZipInputStream(input).use { zip ->
             var entry = zip.nextEntry
             var count = 0
             while (entry != null) {
-                if (++count > 512) error("压缩包条目过多")
+                if (++count > MAX_ENTRIES) error("压缩包条目过多")
                 val name = entry.name.replace('\\', '/')
                 if (name.contains("..")) error("压缩包里有非法路径：$name")
                 val outFile = File(target, name)
-                if (!outFile.canonicalPath.startsWith(target.canonicalPath)) {
+                val outPath = outFile.canonicalPath
+                if (outPath != targetPath && !outPath.startsWith("$targetPath${File.separator}")) {
                     error("压缩包里有非法路径：$name")
                 }
                 if (entry.isDirectory) {
                     outFile.mkdirs()
                 } else {
                     outFile.parentFile?.mkdirs()
-                    outFile.outputStream().use { out -> zip.copyTo(out) }
+                    outFile.outputStream().use { out ->
+                        val buffer = ByteArray(8 * 1024)
+                        var written = 0L
+                        while (true) {
+                            val read = zip.read(buffer)
+                            if (read <= 0) break
+                            written += read
+                            total += read
+                            if (written > MAX_ENTRY_BYTES) error("压缩包里有个条目过大：$name")
+                            if (total > MAX_TOTAL_BYTES) error("压缩包解开后过大")
+                            out.write(buffer, 0, read)
+                        }
+                    }
                 }
                 zip.closeEntry()
                 entry = zip.nextEntry
             }
         }
+    }
+
+    private companion object {
+        /** 压缩包条目数上限喵。 */
+        const val MAX_ENTRIES = 512
+
+        /** 单个条目解压后的上限喵。 */
+        const val MAX_ENTRY_BYTES = 8L * 1024 * 1024
+
+        /** 整个压缩包解压后的总上限喵。 */
+        const val MAX_TOTAL_BYTES = 64L * 1024 * 1024
     }
 }
 
