@@ -118,7 +118,7 @@ $env:JAVA_HOME = '<你的 JDK 路径>'
 $env:ANDROID_HOME = '<你的 Android SDK 路径>'
 
 .\gradlew.bat :app:assembleDebug          # 调试包，不需要签名
-.\gradlew.bat :app:testDebugUnitTest      # 验证：应输出 451 全部通过
+.\gradlew.bat :app:testDebugUnitTest      # 验证：应输出 464 全部通过
 ```
 
 | 产物 | 包名 | 说明 |
@@ -221,7 +221,7 @@ keyPassword=<你的口令>
 
 ## 四、测试覆盖
 
-**35 个测试类 / 451 个用例**，全部是纯 JVM 测试（不需要模拟器）。
+**36 个测试类 / 464 个用例**，全部是纯 JVM 测试（不需要模拟器）。
 跑 `.\gradlew.bat :app:testDebugUnitTest` 可复现。
 
 | 测试类 | 覆盖内容 |
