@@ -4,6 +4,7 @@ import android.graphics.BitmapFactory
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -139,12 +140,30 @@ fun ReasoningBlock(
 }
 
 /** 一条消息。点击气泡弹出操作菜单喵。 */
+/**
+ * 消息入场用的动画规格：**临界阻尼、不回弹**喵。
+ *
+ * 原来用的是 `dampingRatio = 0.82`，那是欠阻尼——到位之后还会有一点过冲和抖动喵。
+ * 要的是"平滑 + 阻尼感"，所以把阻尼比提到 1（临界阻尼）：
+ * 只滑到位、绝不越位，收尾干净喵。
+ * 刚度取 MediumLow，让整个过程铺开一点——快而不急，是"被轻轻放下"的手感喵。
+ *
+ * 故意不用 tween：tween 是匀速感，位移动画的结尾会显得"啪"地停住；
+ * 临界阻尼弹簧的减速曲线才是那种有质感的收尾喵。
+ */
+private val EnvelopeSpec = spring<Float>(
+    dampingRatio = 1f,
+    stiffness = Spring.StiffnessMediumLow,
+)
+
 @Composable
 fun MessageRow(
     message: ChatMessage,
     persona: Persona?,
     streaming: Boolean = false,
     showAvatar: Boolean = true,
+    /** 这一条是不是**刚到的**消息；只有它才做入场动画喵。 */
+    animateIn: Boolean = true,
     showReasoning: Boolean = true,
     onRegenerate: () -> Unit = {},
     onToggleFavorite: () -> Unit = {},
@@ -170,16 +189,22 @@ fun MessageRow(
     // 自己发的从右边来、对方的从左边来，方向感与气泡位置一致喵。
     // 必须放在下面那个提前 return 之前——否则用户切换"显示思考过程"时，
     // 本函数的 remember 调用次数会变，Compose 的插槽对不上会直接崩喵。
-    val appear = remember(message.id) { Animatable(0f) }
+    //
+    // **只有刚到的消息才走这套**喵（见 [animateIn]）：原来每条消息第一次进组合
+    // 都从 alpha=0 起跑，于是每次打开对话，可视区几十条会同时淡入 + 位移——
+    // 既白掉一批帧，观感上也像"整段历史刚被重放了一遍"喵。
+    val appear = remember(message.id) { Animatable(if (animateIn) 0f else 1f) }
     LaunchedEffect(message.id) {
-        appear.animateTo(1f, spring(dampingRatio = 0.82f, stiffness = 420f))
+        if (animateIn) appear.animateTo(1f, EnvelopeSpec)
     }
 
     // 用户在设置里关掉思考展示时，reasoning 消息整条不渲染喵。
     if (message.role == MessageRole.REASONING && !showReasoning) return
 
-    Row(
-        modifier = modifier
+    // 不做入场动画的消息**不挂 graphicsLayer**喵：那一层是为动画开的独立渲染层，
+    // 历史消息常驻几十条时它就是纯开销喵。
+    val rowModifier = if (animateIn) {
+        modifier
             .fillMaxWidth()
             .graphicsLayer {
                 alpha = appear.value
@@ -187,7 +212,15 @@ fun MessageRow(
                 // 位移压得很小：气泡本身就在屏幕一侧，滑太远会显得晃喵。
                 translationX = (1f - appear.value) * (if (isUser) 26f else -26f)
             }
-            .padding(horizontal = 12.dp, vertical = 4.dp),
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+    } else {
+        modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+    }
+
+    Row(
+        modifier = rowModifier,
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
         verticalAlignment = Alignment.Top,
     ) {
