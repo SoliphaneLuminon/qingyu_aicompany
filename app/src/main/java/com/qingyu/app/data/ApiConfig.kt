@@ -94,6 +94,4 @@ data class ApiConfig(
     val baseUrl: String = "",
     val apiKey: String = "",
     val model: String = "",
-) {
-    val configured: Boolean get() = apiKey.isNotBlank() || baseUrl.isNotBlank()
-}
+)
