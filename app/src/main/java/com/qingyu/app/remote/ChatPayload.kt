@@ -90,7 +90,4 @@ object VisionPrompt {
     """.trimIndent()
 
     const val USER = "请描述这张图片。"
-
-    /** 备用：主模型自己能看图时，直接把图发过去，不需要这段提示喵。 */
-    fun describeFor(role: String): String = "$role 发来了一张图片"
 }
