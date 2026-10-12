@@ -28,7 +28,6 @@ data class FavoritesUiState(
     val filter: FavoriteKind? = null,
     val keyword: String = "",
     val toast: String? = null,
-    val editing: Favorite? = null,
     val counts: Map<FavoriteKind, Int> = emptyMap(),
 )
 
@@ -86,18 +85,6 @@ class FavoritesViewModel(application: Application) : AndroidViewModel(applicatio
             reload()
         }
     }
-
-    fun update(favorite: Favorite) {
-        viewModelScope.launch {
-            db.favorites.update(favorite)
-            _state.update { it.copy(editing = null, toast = "已保存") }
-            reload()
-        }
-    }
-
-    fun startEdit(favorite: Favorite) = _state.update { it.copy(editing = favorite) }
-
-    fun cancelEdit() = _state.update { it.copy(editing = null) }
 
     fun exportAll() {
         viewModelScope.launch {
