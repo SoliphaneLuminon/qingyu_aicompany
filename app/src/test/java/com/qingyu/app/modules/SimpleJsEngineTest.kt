@@ -14,7 +14,6 @@ class SimpleJsEngineTest {
 
     private class RecordingBridge : ModuleHost {
         val pushed = mutableListOf<String>()
-        val logs = mutableListOf<String>()
         private val values = HashMap<String, String>()
 
         override fun personaName(): String = "苏婉"
