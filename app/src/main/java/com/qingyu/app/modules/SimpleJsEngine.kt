@@ -740,7 +740,6 @@ class SimpleJsEngine {
         val body: Node,
         val closure: Scope,
         val exprBody: Boolean,
-        val isArrow: Boolean,
     )
 
     private class ReturnSignal(val value: Any?) : RuntimeException()
@@ -898,7 +897,7 @@ class SimpleJsEngine {
                 }
 
                 is FuncDecl -> {
-                    scope.define(node.name, JsFunction(node.name, node.params, node.body, scope, false, false))
+                    scope.define(node.name, JsFunction(node.name, node.params, node.body, scope, false))
                     Undefined
                 }
 
@@ -1040,8 +1039,8 @@ class SimpleJsEngine {
                     node.entries.forEach { entry -> map[entry.first] = exec(entry.second, scope) }
                     map
                 }
-                is FuncExpr -> JsFunction(node.name, node.params, node.body, scope, false, false)
-                is Arrow -> JsFunction(null, node.params, node.body, scope, node.exprBody, true)
+                is FuncExpr -> JsFunction(node.name, node.params, node.body, scope, false)
+                is Arrow -> JsFunction(null, node.params, node.body, scope, node.exprBody)
                 is Ident -> scope.get(node.name)
                 is Literal -> node.value
                 is TemplateLit -> node.parts.joinToString("") { stringify(exec(it, scope)) }
