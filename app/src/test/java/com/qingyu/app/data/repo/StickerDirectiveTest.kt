@@ -51,19 +51,38 @@ class StickerDirectiveTest {
     }
 
     @Test
-    fun `名字不在可用列表里就当普通文字`() {
-        // 模型有时会编一个名字出来；那时留着这行会让人看到一句莫名其妙的话喵。
+    fun `名字不在可用列表里时只清掉字段不发表情`() {
+        // 模型有时会编一个名字出来。留着这一行就是用户看到的「【表情包：xxx】」字段，
+        // 而用户明确要求过"不能出现这种字段"，所以抠掉、但不发喵。
         val result = StickerDirective.parse("【表情包：不存在的表情】", available)
-        assertEquals("编出来的名字不该被当成指令", "【表情包：不存在的表情】", result.text)
-        assertTrue("也不该发出任何表情", result.stickerNames.isEmpty())
+        assertEquals("字段必须消失", "", result.text)
+        assertTrue("但不该发出任何表情", result.stickerNames.isEmpty())
     }
 
     @Test
-    fun `混在句子中间的不算指令`() {
-        // 只认整行：混在句中剥离后容易留下半句话，读起来怪喵。
+    fun `夹在句子中间的指令照样能发出来`() {
+        // 用户反馈：「表情包【】夹在句子中显示不出来」喵。
+        // 只认整行的旧实现遇到这种写法一个都匹配不到，方括号还会原样留在聊天里喵。
         val result = StickerDirective.parse("我觉得【表情包：开心】挺好的", available)
-        assertEquals("句中出现的应当原样保留", "我觉得【表情包：开心】挺好的", result.text)
-        assertTrue(result.stickerNames.isEmpty())
+        assertEquals("应当抠掉指令、留下两边的话", "我觉得挺好的", result.text)
+        assertEquals("也该真的把表情发出去", listOf("开心"), result.stickerNames)
+    }
+
+    @Test
+    fun `句首与句尾夹着的指令也认得出来`() {
+        val head = StickerDirective.parse("【表情包：开心】今天真开心", available)
+        assertEquals("今天真开心", head.text)
+        assertEquals(listOf("开心"), head.stickerNames)
+
+        val tail = StickerDirective.parse("唉【表情包：难过】", available)
+        assertEquals("唉", tail.text)
+        assertEquals(listOf("难过"), tail.stickerNames)
+    }
+
+    @Test
+    fun `抠掉指令后只剩标点的行不留着`() {
+        // "【表情包：开心】。" 抠完只剩一个句号，留着就是布局上的破洞喵。
+        assertEquals("", StickerDirective.parse("【表情包：开心】。", available).text)
     }
 
     @Test
