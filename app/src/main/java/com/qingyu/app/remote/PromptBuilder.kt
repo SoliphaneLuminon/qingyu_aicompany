@@ -34,15 +34,23 @@ object PromptBuilder {
      */
     private val BURST_INSTRUCTION = """
         ${SENDING_RULES_MARKER}——必须遵守】
-        1. 先说最要紧的：**每一句话里，该停顿的地方都要用逗号隔开**。
-           不许出现一长串没有任何标点连到底的句子——那是这条要求最常见的违规形态。
-           逗号只是断句标记，不算书面腔，该用就用，但别滥用。
+        1. **最要紧的一条：该停顿的地方一律用逗号（，）隔开**。
+           程序只认逗号、句号、叹号、问号、分号这五个标点来拆消息；
+           你不写逗号，整段话就只能挤成一条又长又闷的消息。
+           照着下面三条自检，做不到就重写：
+           - 一句话里说了**两件事**，两件事之间必须有逗号；
+           - 一行超过 **12 个字**却一个逗号都没有，就是违规，必须补上；
+           - 逗号只是断句标记，不算书面腔，该用就用，但别滥用。
         2. 真正换气的地方再用空行隔开；整段一共 1~3 条短消息，每条都要短（尽量不超过 20 个字）。
         3. 不要编号、不要标题、不要书面分段，也不要用括号写动作。
         4. 只想说一句话就直接一句，不用凑好几条。
+        5. **写完之后再检查一遍**，把漏掉的逗号补上，然后才发出来。
 
         反面例子（绝对不要这样）：今天上班真的好累啊明天还要早起开会真是受不了
         正面例子（要这样）：今天上班真的好累啊，明天还要早起开会，真是受不了
+
+        反面例子（绝对不要这样）：我妈刚才又打电话来催我相亲烦死了我都不知道怎么回她
+        正面例子（要这样）：我妈刚才又打电话来催我相亲，烦死了，我都不知道怎么回她
     """.trimIndent()
 
     /**
@@ -173,7 +181,7 @@ object PromptBuilder {
             appendLine(BURST_INSTRUCTION)
         } else {
             appendLine()
-            appendLine("【发送方式】一次只回一条消息，简洁口语化。")
+            appendLine("【发送方式】一次只回一条消息，简洁口语化。**该停顿的地方用逗号（，）隔开**。")
         }
     }
 
@@ -289,20 +297,30 @@ object PromptBuilder {
     }
 
     /**
-     * 兜底拆分：模型没产出空行时，尝试按句号/感叹号/问号切割喵。
+     * 算出"每个位置之前有几层括号没闭上"喵。
      *
-     * 只在 [splitBurst] 颗粒无收时使用——这属于"尽力而为"的补丁喵，
-     * 不加到主拆分路径里是为了不影响空行拆分的行为（那个已经被单元测试钉住喵）。
+     * @return 长度是 `text.length + 1`；`depth[i]` 是第 i 个字符**之前**的层数喵。
+     *   于是"在第 i 与 i+1 之间下刀"要看 `depth[i + 1]`喵。
+     *
+     * 所有成对符号都算：方头括号、圆括号、方括号、书名号、直角引号，以及半角形式喵。
+     *
+     * 抽成公共函数是为了让**括号里绝不切**成为两条拆分路径上同一条不变式喵
+     * （见 [splitLongRun] 与 [com.qingyu.app.data.repo.BurstAccumulator.splitByCommaAndPunctuation]）：
+     * 表情指令、图片旁注、红包旁注全都长在括号里，
+     * 从中间切开的后果都一样——字段发不出去，聊天里还多出两段乱字喵。
      */
-    fun sentenceSplit(text: String): List<String> {
-        val normalized = text.replace("\r\n", "\n").trim()
-        if (normalized.isEmpty()) return emptyList()
-        // 在 。！？ 后面且之后至少还有 4 个非空字符才切（避免在 "嗯。" "哦？" 这类短应答处切断喵）
-        val parts = normalized.split(Regex("(?<=[。！？])(?=\\s*\\S.{3,})"))
-        return parts
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .take(4)
+    fun bracketDepth(text: String): IntArray {
+        val depth = IntArray(text.length + 1)
+        var current = 0
+        text.forEachIndexed { index, c ->
+            depth[index] = current
+            when (c) {
+                '【', '（', '(', '[', '「', '『', '《' -> current++
+                '】', '）', ')', ']', '」', '』', '》' -> if (current > 0) current--
+            }
+        }
+        depth[text.length] = current
+        return depth
     }
 
     /**
@@ -318,10 +336,15 @@ object PromptBuilder {
      *
      * 长度阈值取 [MAX_RUN_LENGTH] 而不是更小：这一道是**兜底**，
      * 只在明显过长时出手，正常的短句不该被动到喵。
+     *
+     * **切点一律避开括号内部**喵（见 [bracketDepth]）：这一道是按长度硬切的，
+     * 而指令与旁注都可能比阈值还长，从中间切开就等于把它们废掉喵。
      */
     fun splitLongRun(text: String, maxLength: Int = MAX_RUN_LENGTH): List<String> {
         val normalized = text.trim()
         if (normalized.length <= maxLength) return if (normalized.isEmpty()) emptyList() else listOf(normalized)
+
+        val depth = bracketDepth(normalized)
 
         val out = ArrayList<String>()
         var start = 0
@@ -336,13 +359,21 @@ object PromptBuilder {
             val softFloor = start + MIN_TAIL_LENGTH
             var cut = -1
             for (i in hardEnd - 1 downTo softFloor) {
-                if (normalized[i] in SOFT_BREAK_TAIL) {
+                // `depth[i + 1]` 才是"在第 i 与 i+1 之间"的层数喵。
+                if (normalized[i] in SOFT_BREAK_TAIL && depth[i + 1] == 0) {
                     cut = i + 1
                     break
                 }
             }
-            // 找不到助词就硬切；同时保证一定前进，避免死循环喵。
-            if (cut <= start) cut = hardEnd
+            // 找不到合适的助词就硬切；但要**往后挪到括号外**，
+            // 否则一条长指令会被从中间截断，表情就永远发不出去了喵。
+            if (cut <= start) {
+                var i = hardEnd
+                while (i < normalized.length && depth[i] != 0) i++
+                cut = if (i < normalized.length) i else normalized.length
+            }
+            // 兜底保证一定前进，避免死循环喵。
+            if (cut <= start) cut = normalized.length
             out += normalized.substring(start, cut).trim()
             start = cut
         }
