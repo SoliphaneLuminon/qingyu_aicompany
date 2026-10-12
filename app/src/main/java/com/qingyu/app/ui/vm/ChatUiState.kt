@@ -28,6 +28,13 @@ data class ChatUiState(
     val input: String = "",
     /** 主界面的对话列表：只含有对话、且没被移除的那些。 */
     val chatList: List<ChatListEntry> = emptyList(),
+    /**
+     * 全部会话的未读条数之和喵，底部「聊天」标签上那个红点用它喵。
+     *
+     * 它比 [chatList] 里各条 `unread` 之和**只多不少**喵：被移除的会话不在列表里，
+     * 但它没读过的消息照样是"没看过的消息"，漏掉它红点会少报喵。
+     */
+    val unreadTotal: Int = 0,
     /** 主界面用：这些是 chatList 里的角色。 */
     val personas: List<Persona> = emptyList(),
     /** 通讯录用：**全部**角色，含对话已被移除的。 */
@@ -40,7 +47,6 @@ data class ChatUiState(
      */
     val conversationByPersona: Map<Long, Conversation> = emptyMap(),
     val banner: String? = null,
-    val lastFailedInput: String? = null,
     /** 还没配置接口地址 / Key，用于首启引导喵。 */
     val needsSetup: Boolean = false,
     /** 待发送的图片喵。 */
@@ -64,8 +70,6 @@ data class ChatUiState(
     val recordingStartedAt: Long = 0L,
     /** 是否处于实时语音通话中喵。 */
     val inCall: Boolean = false,
-    /** 通话状态文案，例如「正在聆听…」喵。 */
-    val callStatus: String = "",
     /** 红包编辑弹窗是否打开喵。 */
     val redPacketOpen: Boolean = false,
 ) {
@@ -84,7 +88,4 @@ data class ChatUiState(
         get() = (input.isNotBlank() || pendingAttachments.isNotEmpty()) &&
             !importingImage &&
             persona != null
-
-    val showTyping: Boolean
-        get() = stream.generating && stream.bubbles.none { it.id == -1L && it.text.isNotBlank() }
 }
