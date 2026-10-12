@@ -12,9 +12,6 @@ import com.qingyu.app.data.db.QingYuDatabase
 /** 会话相关的读写编排：新建、摘要维护、删除喵。 */
 class ConversationRepository(private val db: QingYuDatabase) {
 
-    suspend fun openForPersona(personaId: Long): Conversation =
-        db.conversations.latestOrCreate(personaId)
-
     /**
      * 主界面的对话列表喵。
      *
@@ -27,16 +24,9 @@ class ConversationRepository(private val db: QingYuDatabase) {
     suspend fun chatList(): List<ChatListEntry> =
         buildChatList(db.personas.list(), db.conversations.listVisible())
 
-    /** 某个角色的那段对话，含被移除的（通讯录与资料页要看它）喵。 */
-    suspend fun conversationOf(personaId: Long): Conversation? = db.conversations.of(personaId)
-
     /** 置顶 / 取消置顶某段对话喵。 */
     suspend fun setPinned(conversationId: Long, pinned: Boolean) =
         db.conversations.setPinned(conversationId, pinned)
-
-    suspend fun list(): List<Conversation> = db.conversations.list()
-
-    suspend fun messages(conversationId: Long): List<ChatMessage> = db.messages.list(conversationId)
 
     suspend fun deleteMessage(messageId: Long) {
         val message = db.messages.get(messageId) ?: return
@@ -50,14 +40,6 @@ class ConversationRepository(private val db: QingYuDatabase) {
         val preview = messages.lastOrNull { it.role != MessageRole.REASONING }?.content?.replace("\n", " ").orEmpty()
         val updatedAt = messages.lastOrNull()?.timestamp ?: TimeUtil.now()
         db.conversations.touch(conversationId, preview, messages.size, updatedAt)
-    }
-
-    /** 删除某条消息及其之后的所有内容，用于"从这里重新生成"喵。 */
-    suspend fun truncateFrom(conversationId: Long, messageId: Long) {
-        val message = db.messages.get(messageId) ?: return
-        db.messages.deleteAfter(conversationId, message.timestamp)
-        // deleteAfter 用的是 >=，会把这条本身删掉；如果是助手消息则保留之前的用户消息喵。
-        refreshSummary(conversationId)
     }
 
     /**
