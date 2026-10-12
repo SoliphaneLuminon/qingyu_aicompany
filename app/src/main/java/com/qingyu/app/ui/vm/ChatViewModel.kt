@@ -18,6 +18,7 @@ import com.qingyu.app.data.repo.ChatEvent
 import com.qingyu.app.data.repo.ReplyRequest
 import com.qingyu.app.data.repo.ChatStreamState
 import com.qingyu.app.media.StickerImporter
+import com.qingyu.app.core.SafeRead
 import com.qingyu.app.core.TimeUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -79,6 +80,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 // 不看对话 id 的话，甲的回复会凭空出现在乙的聊天里喵。
                 if (reply.conversationId == _state.value.conversation?.id) {
                     handleEvent(reply.event)
+                } else if (reply.event is ChatEvent.Finished || reply.event is ChatEvent.Failed) {
+                    // 别的对话跑完了一轮：**必须让主界面知道**喵。
+                    //
+                    // 这里原来直接丢掉，于是"退出聊天框 → 角色回了话 → 回主界面"
+                    // 看到的还是旧的预览与排序时间，像什么都没发生过一样喵。
+                    // 只有**整轮结束**时才刷新：引擎在收尾前已经把会话摘要写回库里
+                    // （refreshSummary），所以这时读到的预览与时间是新的；
+                    // 而逐条 Saved 都刷一遍纯属白读库喵。
+                    refreshPersonas()
                 }
             }
         }
@@ -168,12 +178,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // 通讯录与角色资料页要看**全部**对话（含被移除的），所以这里一并取来按角色索引喵。
         // 放在状态里而不是让界面自己查，是为了避免"界面拿到的是过期数据"这类问题喵。
         val byPersona = db.conversations.list().associateBy { it.personaId }
+        // 标签上那个总数**单独查库**，不拿 chatList 加起来喵：chatList 只含没被移除的对话，
+        // 而被移除但还没读的会话照样是"没看过的消息"，漏掉它红点会少报喵。
+        val unreadTotal = engine.totalUnread()
         _state.update {
             it.copy(
                 chatList = entries,
                 allPersonas = all,
                 personas = entries.map { entry -> entry.persona },
                 conversationByPersona = byPersona,
+                unreadTotal = unreadTotal,
             )
         }
     }
@@ -230,6 +244,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     needsSetup = container.settings.current.apiKey.isBlank(),
                 )
             }
+            // 进来就算看过了喵：**先**告诉流水线"用户正看着这段"，**再**清零喵。
+            // 顺序不能反——反了的话清零会与流水线的记账撞在一起，
+            // 刚好此刻落地的回复会被记成未读，而界面明明已经在看它了喵。
+            coordinator.openConversationId = conversation.id
+            engine.clearUnread(conversation.id)
+            // 桌面角标挂在通知上，未读归零时要把那条常驻通知撤掉喵。
+            container.replyNotifier.showUnreadSummary(engine.totalUnread())
             // 开场白可能是刚写进去的，回列表时预览要能立刻反映出来喵。
             refreshPersonas()
         }
@@ -335,21 +356,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 pendingAttachments = emptyList(),
             )
         }
+        // 离开对话喵：流水线不再认为"用户正看着某段"，
+        // 之后的回复才会被计成未读、也才会发通知喵。
+        coordinator.openConversationId = null
         refreshPersonas()
-    }
-
-    /**
-     * 删除一个角色喵。
-     *
-     * 会话、消息、记忆、索引都由 [PersonaStore.delete] 连带清理喵；
-     * 删掉的若是当前正打开的那个角色，就把对话状态一并清空退回列表喵。
-     */
-    fun deletePersona(persona: Persona) {
-        viewModelScope.launch {
-            db.personas.delete(persona.id)
-            if (_state.value.persona?.id == persona.id) closeChat()
-            refreshPersonas()
-        }
     }
 
     fun onInputChange(value: String) {
@@ -399,7 +409,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 input = "",
                 pendingAttachments = emptyList(),
-                lastFailedInput = null,
                 stickerPanelOpen = false,
                 plusPanelOpen = false,
             )
@@ -552,8 +561,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     // ------------------------------------------------------------ 语音通话
 
-    fun setCallState(inCall: Boolean, status: String) {
-        _state.update { it.copy(inCall = inCall, callStatus = status) }
+    fun setCallState(inCall: Boolean) {
+        _state.update { it.copy(inCall = inCall) }
     }
 
     // ------------------------------------------------------------ 表情包
@@ -568,8 +577,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(stickers = container.stickers.list()) }
         }
     }
-
-    fun closeStickerPanel() = _state.update { it.copy(stickerPanelOpen = false) }
 
     /**
      * 从相册导入一个表情，名字先用文件名，之后可以在表情管理页改喵。
@@ -608,7 +615,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(importingStickers = true) }
             val result = runCatching {
                 val bytes = withContext(Dispatchers.IO) {
-                    getApplication<Application>().contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    // 带上限读喵（见 [SafeRead]）：压缩包多大完全由别人决定，
+                    // 一次性 readBytes 就等于把 OOM 的按钮交给对方喵。
+                    getApplication<Application>().contentResolver.openInputStream(uri)
+                        ?.use { SafeRead.readCapped(it) }
                         ?: error("读不到这个文件")
                 }
                 val entries = withContext(Dispatchers.IO) { StickerImporter.entriesFromZip(bytes) }
@@ -748,7 +758,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // 最后一条不是用户消息就没什么可重试的（例如角色已经回过话了）喵。
         if (current.messages.lastOrNull()?.role != MessageRole.USER) return
 
-        _state.update { it.copy(lastFailedInput = null) }
         // 立刻再跑一轮，不走合并窗口——重试要的就是"点了就动"的手感喵。
         // 交给应用级流水线，这样即使用户马上退出对话或退出应用也会跑完喵。
         coordinator.submitNow(
@@ -885,7 +894,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 // 而且真人发表情包本来就是"啪"一下就过去了，没有逐字打的道理喵。
                 val isSticker = msg.kind == MessageKind.STICKER
 
-                if (msg.role == MessageRole.ASSISTANT && msg.content.isNotBlank() && !isSticker && speed > 0) {
+                // 表情包**也排队**，只是它自己不占逐字时间（见 processTypingQueue）喵。
+                // 不排队的话它会立刻上屏，而同一段里排在它前面的文字还在打字机队列里等着——
+                // 用户看到的顺序就是错的，还得等整轮 reload 才被摆正喵。
+                if (msg.role == MessageRole.ASSISTANT && msg.content.isNotBlank() && speed > 0) {
                     // 打字机模式：完整拆分气泡入队，由 processTypingQueue 负责逐字渲染上屏喵
                     typingQueue.add(msg)
 
@@ -942,7 +954,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
             is ChatEvent.Failed -> {
                 viewModelScope.launch(Dispatchers.Main.immediate) {
-                    _state.update { it.copy(banner = event.message, lastFailedInput = null, topBarTyping = false) }
+                    _state.update { it.copy(banner = event.message, topBarTyping = false) }
                 }
                 // 这一轮废了不必特殊处理：collect 返回后流水线的循环会接着跑下一批喵。
             }
@@ -990,8 +1002,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val fullText = msg.content
             val speedMs = settings.current.typingSpeedMs.toLong()
 
-            // 按字数算延迟：长句子对方要多打一会儿喵
-            val segmentDelay = fullText.length * speedMs
+            // 按字数算延迟：长句子对方要多打一会儿喵。
+            // **表情包不按字数算**：它是一张图，没有"逐字打字"这回事，
+            // 只需要排在它前面那些消息后面就行了喵。
+            val segmentDelay = if (msg.kind == MessageKind.STICKER) 0L else fullText.length * speedMs
 
             if (segmentDelay > 0) delay(segmentDelay)
 
@@ -1005,7 +1019,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             // 自动朗读：通话中无条件念（理由同上面那处），否则看设置喵。
-            if (_state.value.inCall || (settings.current.ttsEnabled && settings.current.autoSpeakReplies)) {
+            // **表情包不念**喵：它的 content 是表情名，念出来就是干巴巴的两个字，
+            // 既不像是人在说话，也不是这张图想表达的东西喵。
+            if (msg.kind != MessageKind.STICKER &&
+                (_state.value.inCall || (settings.current.ttsEnabled && settings.current.autoSpeakReplies))
+            ) {
                 container.speech.speak(fullText)
             }
             // 条与条之间额外停顿喵
@@ -1018,11 +1036,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update { it.copy(topBarTyping = false) }
             }
         }
-    }
-
-    /** 角色被编辑后同步最新设定喵。 */
-    fun onPersonaUpdated(persona: Persona) {
-        _state.update { it.copy(persona = persona, personas = it.personas.map { p -> if (p.id == persona.id) persona else p }) }
     }
 
     companion object {
