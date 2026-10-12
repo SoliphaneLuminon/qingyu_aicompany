@@ -63,6 +63,28 @@ object PromptBuilder {
     """.trimIndent()
 
     /**
+     * 禁止复述"系统旁注"喵。
+     *
+     * 上下文里那些括号标注（「（对方发来一个表情包：开心）」「（图片内容：…）」）
+     * 是**给模型看的旁注**，不是它该说的话喵。不点名禁止时，模型偶尔会照着模板
+     * 抄一行回来，用户就会在自己的聊天里看到这种字段喵。
+     *
+     * 实测最难缠的一种是**连占位符一起抄**：「（你发来一个表情包（表情包名字））」
+     * ——说明它复述的不是某条具体消息，而是提示词里的模板本身喵。
+     * 所以这里点名把「名字」这类占位符也列进禁区喵。
+     *
+     * 落库前还有一道 [com.qingyu.app.data.repo.ReplySanitizer] 兜底喵：
+     * 提示词只能降低概率，挡不住所有网关与模型喵。
+     */
+    private val NO_ECHO_INSTRUCTION = """
+        【绝对不要写出来的东西】
+        上下文里凡是带括号的说明（例如「（对方发来一个表情包：名字）」「（图片内容：…）」），
+        都是系统给你看的旁注，不是对话内容。
+        绝对不要把这类括号说明、也不要把「名字」这种占位符抄进你的回复里。
+        更不要向对方播报你收到了几条消息——那是系统的账，不是你要说的话。
+    """.trimIndent()
+
+    /**
      * 表情包在对话里怎么对待喵。
      *
      * 这条规则是用户明确要求的：表情包**更多是辅助表达**，不是话题本身喵。
@@ -129,6 +151,8 @@ object PromptBuilder {
         }
         appendLine()
         appendLine(REASONING_INSTRUCTION)
+        appendLine()
+        appendLine(NO_ECHO_INSTRUCTION)
         // 表情包说明放在发送要求之前：它是"能做什么"，
         // 而下面那段是"发出去长什么样"，顺序上先讲能力更自然喵。
         val stickerInstruction = StickerDirective.instruction(stickerNames)
@@ -193,10 +217,14 @@ object PromptBuilder {
             ),
         )
         filtered.forEach { message ->
+            val rendered = renderHistoryContent(message)
+            // 渲染后为空就整条跳过喵：只有"名字为空的自发表情"会走到这里，
+            // 塞一个空 turn 进去会让网关报错、或让模型以为对方发了条空白消息喵。
+            if (rendered.isBlank()) return@forEach
             turns.add(
                 ChatTurn(
                     if (message.role == MessageRole.USER) "user" else "assistant",
-                    renderHistoryContent(message),
+                    rendered,
                 ),
             )
         }
@@ -214,18 +242,33 @@ object PromptBuilder {
      * 而识图模型的措辞每次都不完全一样（"一个人在笑" / "笑得很大声"）。
      * 于是同一张表情发三次，模型读到的就是三段不同的描述，
      * 自然表现得像"每次都头一回见"喵。
+     * 所以两种角色都用**固定形态**渲染，同一个表情每次的字面完全一致喵。
      *
-     * 现在统一渲染成一个固定形态的标记，同一个表情每次的字面完全一致，
-     * 模型就能一眼看出"这个刚才发过了"喵。
+     * 但**两种角色不能用同一种形态**喵，这是踩过的坑：
+     * 助手自己发过的表情原本也渲染成旁注（`（你发了 一个表情包：笑）`），
+     * 而它恰恰落在**助手那一侧的历史**里——模型看到"我以前是这么说话的"，
+     * 就照着抄回正文，用户于是收到一条 `（你发来一个表情包（表情包名字））`喵。
+     *
+     * 现在改成：助手发过的表情**直接渲染成它该写的指令本身**喵
+     * （`【表情包：笑】`）。这样"照抄自己"与"正确输出"就是同一件事——
+     * 抄对了会被本地解析成真表情，抄歪了也只是一行解析失败的指令，
+     * 由 [com.qingyu.app.data.repo.ReplySanitizer] 兜掉，不会成为聊天内容喵。
+     *
+     * 对方发的仍然用旁注转述喵：用户不会写指令，只能由我们告诉模型
+     * "这是一个表情，不是两个汉字"喵。
      */
     private fun renderHistoryContent(message: ChatMessage): String =
         if (message.kind == MessageKind.STICKER) {
             val name = message.content.trim()
-            // 谁发的要分清喵：助手自己发过的表情若也写成"对方发来"，
-            // 模型会以为那是用户发的，可能回一句"你发的这个好可爱"——自己夸自己喵。
-            val who = if (message.role == MessageRole.USER) "对方发来" else "你发了"
-            val suffix = if (name.isEmpty()) "" else "：$name"
-            "（$who 一个表情包$suffix）"
+            when {
+                // 对方发来的：转述成旁注。空名字也留个说法，别让这一轮变成空白喵。
+                message.role == MessageRole.USER && name.isEmpty() -> "（对方发来一个表情包）"
+                message.role == MessageRole.USER -> "（对方发来一个表情包：$name）"
+                // 自己发过的：渲染成指令本身（见上面的说明）喵。
+                // 名字为空时交不出合法指令，返回空串让 [turns] 整条跳过喵。
+                name.isEmpty() -> ""
+                else -> "【表情包：$name】"
+            }
         } else {
             message.content
         }
