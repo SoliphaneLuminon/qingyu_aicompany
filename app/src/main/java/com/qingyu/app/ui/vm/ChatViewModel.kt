@@ -61,8 +61,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var typingJob: Job? = null
     /** 流结束了但打字机还没播完，必须等到播完才能 [reload喵]。 */
     private var deferredReload: Boolean = false
-    /** 当前正在打字的那条消息的 id（用于把 partial 映射到完成态喵）。 */
-    private var activeTypingId: Long = -1L
 
     init {
         viewModelScope.launch {
@@ -1013,7 +1011,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             // 条与条之间额外停顿喵
             if (typingQueue.isNotEmpty()) delay(300L)
         }
-        activeTypingId = if (typingQueue.isNotEmpty()) typingQueue.first().id else -1L
         if (deferredReload) {
             deferredReload = false
             reload()
