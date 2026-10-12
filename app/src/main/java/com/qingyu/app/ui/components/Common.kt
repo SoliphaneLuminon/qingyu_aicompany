@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -15,9 +16,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Favorite
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -159,38 +157,48 @@ fun EmptyState(
     }
 }
 
-/** 分区小标题，用于设置页与详情页喵。 */
-@Composable
-fun SectionHeader(
-    text: String,
-    modifier: Modifier = Modifier,
-    trailing: (@Composable () -> Unit)? = null,
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.weight(1f),
-        )
-        trailing?.invoke()
-    }
+/** 微信那种红喵。定成常量而不是就地写字面量，免得几处各写一个略微不同的红喵。 */
+private val UnreadRed = Color(0xFFFA5151)
+
+/**
+ * 红点里要显示的文案喵；返回 null 表示**不该画**这个徽标喵。
+ *
+ * 抽成纯函数是为了能钉住边界（见 `UnreadBadgeTest`）喵：0 不画、99 显示 99、
+ * 100 显示 99+喵。过了 99 就不再报具体数字——三位数会把圆点撑得很大，
+ * 而且"99+"传达的信息已经够了喵。
+ */
+fun unreadBadgeLabel(count: Int): String? = when {
+    count <= 0 -> null
+    count > 99 -> "99+"
+    else -> count.toString()
 }
 
-/** 收藏角标喵。 */
+/**
+ * 微信式未读红点：红底、白字、居中喵。
+ *
+ * 条数为 0 时**整个不画**——留一个空红圈比不画更难看喵。
+ */
 @Composable
-fun FavoriteBadge(modifier: Modifier = Modifier) {
-    Icon(
-        imageVector = Icons.Outlined.Favorite,
-        contentDescription = "已收藏",
-        tint = MaterialTheme.colorScheme.tertiary,
-        modifier = modifier.size(14.dp),
-    )
+fun UnreadBadge(count: Int, modifier: Modifier = Modifier) {
+    val label = unreadBadgeLabel(count) ?: return
+    // 一位数用正圆，两位数以上拉成胶囊喵：正圆会把"12"这种两位数的边缘切掉喵。
+    val shape = if (label.length <= 1) CircleShape else RoundedCornerShape(50)
+    Box(
+        modifier = modifier
+            .defaultMinSize(minWidth = 18.dp, minHeight = 18.dp)
+            .clip(shape)
+            .background(UnreadRed)
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            color = Color.White,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+        )
+    }
 }
 
 /** 小圆点分隔符喵。 */
@@ -202,29 +210,6 @@ fun Dot(alpha: Float = 0.5f) {
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha)),
     )
-}
-
-/** 聊天气泡外框：统一圆角与配色，避免各处手写喵。 */
-@Composable
-fun BubbleSurface(
-    isUser: Boolean,
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit,
-) {
-    val scheme = MaterialTheme.colorScheme
-    val shape = if (isUser) {
-        RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 20.dp, bottomEnd = 6.dp)
-    } else {
-        RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 6.dp, bottomEnd = 20.dp)
-    }
-    Box(
-        modifier = modifier
-            .clip(shape)
-            .background(if (isUser) scheme.primary else scheme.surfaceContainerHigh)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-    ) {
-        content()
-    }
 }
 
 /** 供"标签"使用的小胶囊喵。 */
@@ -259,17 +244,6 @@ fun TypingDots(modifier: Modifier = Modifier, tint: Color = MaterialTheme.colorS
             )
         }
     }
-}
-
-/** 极细的分割线喵。 */
-@Composable
-fun HairLine(modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(1.dp)
-            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
-    )
 }
 
 /** 用于列表项的左侧强调条喵。尺寸可调，说明弹层的小标题也复用它喵。 */
