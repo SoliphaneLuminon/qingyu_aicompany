@@ -4,6 +4,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.graphics.BitmapFactory
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
@@ -154,8 +155,37 @@ fun ChatScreen(
         }
     }
 
-    val timeline = remember(state.messages, state.stream, showReasoning) {
-        buildTimeline(state).filter { it !is TimelineItem.Reason || showReasoning }
+    // **拆成两半算**喵，这是进聊天框与发消息掉帧的主因之一：
+    // 原来整条时间线只挂了一个 remember，键里带着 state.stream——
+    // 而流式期间 stream **每来一个 token 就是一个新对象**，于是每个 token 都要
+    // 重扫全部消息、重算日期分隔，一次 O(消息数) 的重建喵。
+    //
+    // 历史那半只跟 messages 有关、流式那半只跟 stream 有关，各算各的、各自缓存喵。
+    val historyItems = remember(state.messages, showReasoning) {
+        buildHistoryItems(state.messages, showReasoning)
+    }
+    // 已落库 id 的集合：流式那半用它判"这个气泡是不是已经落库了"喵。
+    // 用集合是 O(1)，而它只在消息变化时重建一次（不是每个 token）喵。
+    val messageIds = remember(state.messages) {
+        state.messages.mapTo(HashSet(state.messages.size)) { it.id }
+    }
+    val lastMessage = state.messages.lastOrNull()
+    val streamItems = remember(state.stream, showReasoning, messageIds, lastMessage) {
+        buildStreamItems(
+            stream = state.stream,
+            showReasoning = showReasoning,
+            messageIds = messageIds,
+            lastRole = lastMessage?.role,
+            lastContent = lastMessage?.content.orEmpty(),
+        )
+    }
+    val timeline = if (streamItems.isEmpty()) historyItems else historyItems + streamItems
+
+    // 「刚到的消息」的分界线喵：进入这段对话那一刻的最大消息 id。
+    // 比它大的都是这次进来之后才到的（自己发的、对方回的、表情、思考），
+    // 只有这些做入场动画；历史消息就地画出来、不淡入也不位移喵。
+    val baselineId = remember(state.conversation?.id) {
+        state.messages.maxOfOrNull { it.id } ?: 0L
     }
 
     LaunchedEffect(state.banner) {
@@ -179,8 +209,20 @@ fun ChatScreen(
         )
     }
 
-    LaunchedEffect(timeline.size, timeline.lastOrNull()) {
-        if (timeline.isNotEmpty()) {
+    // **只有"新来了一条"才自动滚到底**喵。
+    //
+    // 原来键里挂着 `timeline.lastOrNull()`——那是一个每次重建都会换身份的对象，
+    // 而流式期间时间线每个 token 都在重建，于是这个 effect 每个 token 重启一次、
+    // 每次都把上一次的滚动动画打断重来：屏幕一直在被拽，帧也就一直掉喵。
+    // 现在键换成**最后一条的稳定 key**（字符串），内容增长不会重启它喵。
+    val lastItemKey = timeline.lastOrNull()?.let(::timelineKey)
+    LaunchedEffect(timeline.size, lastItemKey) {
+        if (timeline.isEmpty()) return@LaunchedEffect
+        // 用户自己往上翻看历史时**绝不硬拽回去**喵：那是最恼人的手感。
+        // 只在本来就在底部附近（最后两条可见）时才跟随喵。
+        val info = listState.layoutInfo
+        val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: return@LaunchedEffect
+        if (lastVisible >= info.totalItemsCount - 2) {
             runCatching { listState.animateScrollToItem(timeline.lastIndex) }
         }
     }
@@ -330,19 +372,7 @@ fun ChatScreen(
                     ) {
                         items(
                             items = timeline,
-                            key = { item ->
-                                when (item) {
-                                    is TimelineItem.Day -> "day-${item.label}"
-                                    is TimelineItem.Msg -> "msg-${item.message.id}"
-                                    is TimelineItem.Bubble -> "bubble-${item.bubble.id}-${item.bubble.timestamp}"
-                                    // **流式思考块用一个固定 key** 喵：它的文字每来一个 token 就变一次，
-                                    // 若把文字算进 key，每个 token 都会「删掉旧的、插入新的」——
-                                    // 叠加动画就是一堆半透明残影摞在背景上，而它们会一直堆到
-                                    // 模型想完、不再有新 token 为止喵。
-                                    // 同一时刻只会有一个实时思考块，固定 key 不会撞车喵。
-                                    is TimelineItem.Reason -> "reason-streaming"
-                                }
-                            },
+                            key = { item -> timelineKey(item) },
                             // 新消息插进来时，后面的项平滑让位而不是瞬移；
                             // 删除时同理，整段列表不会"跳"一下喵。
                             contentType = { item ->
@@ -354,13 +384,21 @@ fun ChatScreen(
                                 }
                             },
                         ) { item ->
-                            // 位移过渡保留：新消息插进来时，后面的项平滑让位而不是瞬移喵。
-                            //
-                            // 但**淡出必须关掉**（fadeOutSpec = null）喵。默认的淡出会把这个
-                            // 已经被移出列表的气泡继续留在屏幕上、慢慢变透明——用户看到的就是
-                            // 「原消息钉在另一层、融进背景里」，一直拖到流式结束、不再高频重组
-                            // 才终于消失喵。而「重新生成」的第一诉求恰恰是"点了旧的立刻就没"喵。
-                            val itemModifier = Modifier.animateItem(fadeOutSpec = null)
+                            // **只留位移过渡**喵：
+                            // - 淡出必须关掉（fadeOutSpec = null）：默认淡出会把已经移出列表的
+                            //   气泡继续留在屏幕上慢慢变透明，用户看到的是「原消息钉在另一层、
+                            //   融进背景」，一直拖到流式结束才消失喵；
+                            // - 淡入也关掉：入场动画由 MessageRow 按"是不是刚到的消息"决定，
+                            //   两套叠在一起会重复变淡，还白多一层开销喵。
+                            // 位移用**临界阻尼**弹簧，与入场动画同一套手感（平滑、不回弹）喵。
+                            val itemModifier = Modifier.animateItem(
+                                fadeInSpec = null,
+                                fadeOutSpec = null,
+                                placementSpec = spring(
+                                    dampingRatio = 1f,
+                                    stiffness = Spring.StiffnessMediumLow,
+                                ),
+                            )
                             when (item) {
                                 is TimelineItem.Day -> DaySeparator(
                                     text = item.label,
@@ -371,6 +409,9 @@ fun ChatScreen(
                                     message = item.message,
                                     persona = state.persona,
                                     showAvatar = item.showAvatar,
+                                    // 只有进入这段对话之后**新到的**消息才做入场动画喵：
+                                    // 历史消息就地画出来，不淡入、不位移、也不挂渲染层喵。
+                                    animateIn = item.message.id > baselineId,
                                     onRegenerate = { viewModel.regenerate(item.message.id) },
                                     onToggleFavorite = { viewModel.toggleFavorite(item.message) },
                                     onDelete = { viewModel.deleteMessage(item.message) },
@@ -390,6 +431,8 @@ fun ChatScreen(
                                     persona = state.persona,
                                     streaming = item.streaming,
                                     showAvatar = true,
+                                    // 流式气泡永远是"刚到的"，入场动画照给喵。
+                                    animateIn = true,
                                     modifier = itemModifier,
                                 )
 
@@ -539,39 +582,6 @@ private fun ChatInputBar(
 
                 AnimatedVisibility(visible = state.recording) {
                     RecordingIndicator(startedAt = state.recordingStartedAt)
-                }
-
-                AnimatedVisibility(visible = state.lastFailedInput != null) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.errorContainer,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                        shape = RoundedCornerShape(12.dp),
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text(
-                                text = "上次没有发出去",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Text(
-                                text = "重试",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(MaterialTheme.colorScheme.error)
-                                    .clickable(onClick = onRetry)
-                                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                            )
-                        }
-                    }
                 }
             }
 
@@ -1066,14 +1076,25 @@ private fun CircleActionButton(
     }
 }
 
-/** 把消息与流式气泡合并成一条时间线，并在跨天处插入日期喵。 */
-private fun buildTimeline(state: ChatUiState): List<TimelineItem> {
-    val items = ArrayList<TimelineItem>(state.messages.size + state.stream.bubbles.size + 4)
-
+/**
+ * 时间线的**历史那一半**：消息本体 + 跨天日期分隔喵。
+ *
+ * 只依赖消息列表，所以流式期间每个 token 都不会把它重算一遍喵
+ * （原来整条时间线是一个 remember，键里带 stream，于是每 token 都要
+ * 重扫全部消息、重建日期分隔——这是发消息时掉帧的主因之一喵）。
+ */
+private fun buildHistoryItems(
+    messages: List<ChatMessage>,
+    showReasoning: Boolean,
+): List<TimelineItem> {
+    val items = ArrayList<TimelineItem>(messages.size + 4)
     var lastRole: MessageRole? = null
     var lastDay: String? = null
 
-    state.messages.forEach { message ->
+    messages.forEach { message ->
+        // 关掉"显示思考过程"时整条不画，也就**不该占一天的分隔**喵。
+        if (!showReasoning && message.role == MessageRole.REASONING) return@forEach
+
         val day = dayLabel(message.timestamp)
         if (day != lastDay) {
             items.add(TimelineItem.Day(day))
@@ -1084,26 +1105,64 @@ private fun buildTimeline(state: ChatUiState): List<TimelineItem> {
         items.add(TimelineItem.Msg(message, showAvatar))
         lastRole = message.role
     }
+    return items
+}
 
-    val reasoning = state.stream.reasoning.trim()
-    if (state.stream.generating && reasoning.isNotEmpty()) {
-        val alreadyShown = state.messages.lastOrNull()?.let {
-            it.role == MessageRole.REASONING && it.content == reasoning
-        } ?: false
+/**
+ * 时间线的**流式那一半**：还在长的思考块 + 还没落库的乐观气泡喵。
+ *
+ * 只依赖 `stream`（外加两个用来判重的轻量入参），条目数恒为 0~2，
+ * 所以每个 token 重算它也不痛喵。
+ *
+ * @param messageIds 已落库消息的 id 集合；用集合判重是 O(1)，
+ *   原先是在消息列表里线性扫一遍，token 级重算时那是 O(消息数) 喵
+ * @param lastRole / lastContent 最后一条消息的形态，用来判断思考块是不是已经落库了喵
+ */
+private fun buildStreamItems(
+    stream: ChatStreamState,
+    showReasoning: Boolean,
+    messageIds: Set<Long>,
+    lastRole: MessageRole?,
+    lastContent: String,
+): List<TimelineItem> {
+    val items = ArrayList<TimelineItem>(2)
+
+    val reasoning = stream.reasoning.trim()
+    if (showReasoning && stream.generating && reasoning.isNotEmpty()) {
+        val alreadyShown = lastRole == MessageRole.REASONING && lastContent == reasoning
         if (!alreadyShown) {
             items.add(TimelineItem.Reason(reasoning, true))
         }
     }
 
-    state.stream.bubbles.forEachIndexed { index, bubble ->
-        val isLast = index == state.stream.bubbles.lastIndex
-        val alreadySaved = bubble.id > 0 && state.messages.any { it.id == bubble.id }
+    stream.bubbles.forEachIndexed { index, bubble ->
+        val isLast = index == stream.bubbles.lastIndex
+        val alreadySaved = bubble.id > 0 && bubble.id in messageIds
         if (!alreadySaved) {
-            items.add(TimelineItem.Bubble(bubble, streaming = state.stream.generating && isLast))
+            items.add(TimelineItem.Bubble(bubble, streaming = stream.generating && isLast))
         }
     }
 
     return items
+}
+
+/**
+ * 一条时间线在 LazyColumn 里的稳定 key 喵。
+ *
+ * 抽出来是因为它**有两个用处**：当 `items(key = …)`，以及判断
+ * "最后一条是不是换了"（自动滚到底的触发条件）喵。
+ * 两处各写一遍的话，改了一处忘了另一处，滚动就会莫名其妙地不跟手喵。
+ */
+private fun timelineKey(item: TimelineItem): String = when (item) {
+    is TimelineItem.Day -> "day-${item.label}"
+    is TimelineItem.Msg -> "msg-${item.message.id}"
+    is TimelineItem.Bubble -> "bubble-${item.bubble.id}-${item.bubble.timestamp}"
+    // **流式思考块用一个固定 key** 喵：它的文字每来一个 token 就变一次，
+    // 若把文字算进 key，每个 token 都会「删掉旧的、插入新的」——
+    // 叠加动画就是一堆半透明残影摞在背景上，而它们会一直堆到
+    // 模型想完、不再有新 token 为止喵。
+    // 同一时刻只会有一个实时思考块，固定 key 不会撞车喵。
+    is TimelineItem.Reason -> "reason-streaming"
 }
 
 private fun dayLabel(timestamp: Long): String {
