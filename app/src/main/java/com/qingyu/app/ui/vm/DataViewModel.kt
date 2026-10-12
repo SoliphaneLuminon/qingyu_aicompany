@@ -7,9 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.qingyu.app.AppContainer
-import com.qingyu.app.core.TimeUtil
 import com.qingyu.app.core.runCatchingResult
-import com.qingyu.app.data.MessageRole
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,7 +27,6 @@ import kotlinx.coroutines.withContext
 data class DataUiState(
     val busy: Boolean = false,
     val message: String? = null,
-    val importedConversationId: Long = 0L,
 )
 
 /** 数据页：导入聊天记录、导出全部内容喵。 */
@@ -59,7 +56,6 @@ class DataViewModel(application: Application) : AndroidViewModel(application) {
                 when (result) {
                     is com.qingyu.app.core.Result.Ok -> it.copy(
                         busy = false,
-                        importedConversationId = result.value.conversationId,
                         message = "已导入 ${result.value.messageCount} 条消息到「${result.value.personaName}」",
                     )
 
@@ -91,19 +87,6 @@ class DataViewModel(application: Application) : AndroidViewModel(application) {
                     busy = false,
                     message = "已导出 $chatCount 个对话${if (messageCount > 0) "，收藏空间已单独导出" else ""} 到 下载/轻语",
                 )
-            }
-        }
-    }
-
-    /** 导出某个会话为 Markdown，方便直接阅读或分享喵。 */
-    fun exportConversationAsMarkdown(conversationId: Long) {
-        viewModelScope.launch {
-            _state.update { it.copy(busy = true) }
-            val uri = withContext(Dispatchers.IO) {
-                runCatching { container.archive.exportConversationAsText(conversationId) }.getOrNull()
-            }
-            _state.update {
-                it.copy(busy = false, message = if (uri == null) "导出失败" else "已导出到 下载/轻语")
             }
         }
     }
