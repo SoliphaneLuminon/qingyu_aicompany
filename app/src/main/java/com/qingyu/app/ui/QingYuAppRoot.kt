@@ -12,6 +12,9 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.Alignment
+import com.qingyu.app.ui.components.UnreadBadge
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -555,8 +558,8 @@ fun QingYuAppRoot(
                 // 通话期间置上标记：回复要无条件念出来，不能依赖聊天页那两个朗读开关喵。
                 // 离开这一屏（含返回键、挂断）时由 DisposableEffect 清掉，不会残留喵。
                 DisposableEffect(Unit) {
-                    chatViewModel.setCallState(inCall = true, status = "通话中")
-                    onDispose { chatViewModel.setCallState(inCall = false, status = "") }
+                    chatViewModel.setCallState(inCall = true)
+                    onDispose { chatViewModel.setCallState(inCall = false) }
                 }
                 CallScreen(
                     persona = persona,
@@ -616,16 +619,28 @@ fun QingYuAppRoot(
                                     tab = item
                                 },
                                 icon = {
-                                    Icon(
-                                        imageVector = when (item) {
-                                            HomeTab.HOME -> Icons.Outlined.ChatBubbleOutline
-                                            HomeTab.CONTACTS -> Icons.Outlined.Contacts
-                                            HomeTab.FAVORITES -> Icons.Outlined.FavoriteBorder
-                                            HomeTab.MEMORY -> Icons.Outlined.Psychology
-                                            HomeTab.SETTINGS -> Icons.Outlined.Settings
-                                        },
-                                        contentDescription = item.label,
-                                    )
+                                    // 「聊天」标签上挂一个未读总数红点喵，位置与微信一致喵。
+                                    // 只挂在聊天标签上：别的标签没有"未读消息"这个概念喵。
+                                    Box {
+                                        Icon(
+                                            imageVector = when (item) {
+                                                HomeTab.HOME -> Icons.Outlined.ChatBubbleOutline
+                                                HomeTab.CONTACTS -> Icons.Outlined.Contacts
+                                                HomeTab.FAVORITES -> Icons.Outlined.FavoriteBorder
+                                                HomeTab.MEMORY -> Icons.Outlined.Psychology
+                                                HomeTab.SETTINGS -> Icons.Outlined.Settings
+                                            },
+                                            contentDescription = item.label,
+                                        )
+                                        if (item == HomeTab.HOME) {
+                                            UnreadBadge(
+                                                count = chatState.unreadTotal,
+                                                modifier = Modifier
+                                                    .align(Alignment.TopEnd)
+                                                    .offset(x = 8.dp, y = (-6).dp),
+                                            )
+                                        }
+                                    }
                                 },
                                 label = { Text(item.label) },
                             )
@@ -686,7 +701,6 @@ fun QingYuAppRoot(
                         )
 
                         HomeTab.FAVORITES -> FavoritesScreen(
-                            container = container,
                             personaId = activePersonaId,
                         )
 
