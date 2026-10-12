@@ -96,33 +96,50 @@ class BurstAccumulator(
 
         /**
          * 拟真打字切分算法喵：
-         * 1. 扫描中英文逗号（，,）、句号（。）、问号（！？!?）、分号（；;）以及换行符喵；
+         * 1. 只扫描**逗号、句号、叹号、问号、分号**（含它们的美式写法）与换行符喵；
          * 2. 当标点前面的文本累积字数 **> [minLength]** 时，在此断开作为一条独立消息喵；
          * 3. 若字数 <= [minLength]（如"好的，"、"嗯嗯，"），则保留标点并与下一句合并，避免过于碎片化喵。
          *
          * 断开处的标点是**有意丢弃**的，不是漏加：真人用手机连发时几乎不会给每条都补句号喵，
          * 留着反而像在念稿子。只有"攒着不拆"的短应答才会把标点带进下一段喵。
          *
-         * 标点集合刻意收得比"书面标点"宽喵：早期只有 `，。！？；`，
-         * 而聊天里真正常见的停顿还包括顿号、冒号、省略号、波浪号与破折号——
-         * 模型只用了这些时，旧集合一个都匹配不到，整段话就会原样变成一条长消息喵。
+         * **标点集合只有这五个**，这是用户明确要求的规则，起因是一个真实的 bug 喵：
+         * 早先集合里还有冒号，而「发表情包」指令长这样——`【表情包：笑】`喵。
+         * 那个全角冒号正好落在切分点上，指令被切成「【表情包」与「笑】」两半，
+         * 于是表情发不出去，聊天里还凭空多出两段乱字喵。
          *
-         * 一条标点都没有时交给 [PromptBuilder.splitLongRun] 兜底喵，
-         * 否则"模型不写逗号"就等于"永远不拆"——那正是用户反复反馈的那个问题喵。
+         * 早先为了救「模型不写逗号」把顿号、冒号、省略号、波浪号、破折号都塞了进来喵。
+         * 那是**治标**：切分依据越杂，行为越难预测，最后连自己发出去的指令都切喵。
+         * 现在改成治本——切分只管真正的句读，**逗号由提示词强制模型写**喵
+         * （见 [PromptBuilder.BURST_INSTRUCTION]）；
+         * 一个标点都没有的长句仍由 [PromptBuilder.splitLongRun] 兜底喵。
+         *
+         * 另有一条不变式：**括号里绝不切**（见下面循环里的括号深度判断）喵。
          */
         fun splitByCommaAndPunctuation(text: String, minLength: Int = MIN_SEGMENT_LENGTH): List<String> {
             if (text.isBlank()) return emptyList()
 
-            val delimiters = Regex("([，,。！？!?；;、：:…~～—–·\n]+)")
             val result = mutableListOf<String>()
             var currentBuffer = StringBuilder()
 
-            val matcher = delimiters.toPattern().matcher(text)
+            val matcher = DELIMITERS.toPattern().matcher(text)
             var lastEnd = 0
+            // 括号深度：`depth[i]` 是第 i 个字符**之前**未闭合的括号数喵。
+            // 与 [PromptBuilder.splitLongRun] 共用同一份定义，
+            // 这样"括号里绝不切"在两条拆分路径上是同一条不变式喵。
+            val depth = PromptBuilder.bracketDepth(text)
 
             while (matcher.find()) {
                 val matchStart = matcher.start()
                 val matchEnd = matcher.end()
+
+                // **括号里绝不切**喵：括号内的标点是"内容的一部分"，不是句读喵。
+                // 表情名里带标点（`【表情包：笑，打滚】`）时若从中间断开，指令就废了——
+                // 表情发不出去，用户还会多看到两段乱字喵。
+                // 旁注「（…，…）」同理：从中间断开会把一句说明拆成两半喵。
+                //
+                // 这里直接 continue、**不推进 lastEnd**，那个标点就会留在正文里喵。
+                if (depth[matchStart] > 0) continue
 
                 val part = text.substring(lastEnd, matchStart)
                 val punc = text.substring(matchStart, matchEnd)
@@ -130,12 +147,11 @@ class BurstAccumulator(
                 currentBuffer.append(part)
 
                 val currentText = currentBuffer.toString().trim()
-                // 强停顿（句号、问号、叹号、省略号、换行）**出现就断**喵：
-                // 哪怕前面只有"我想想"三个字，"我想想…算了还是去吧"也该是两条，
-                // 而不是因为前缀短就硬把两句粘在一起喵。
+                // 强停顿（句号、问号、叹号、换行）**出现就断**喵：
+                // 哪怕前面只有两三个字也该收尾，而不是因为前缀短就硬把两句粘在一起喵。
                 val isStrong = punc.any { it in STRONG_PAUSES }
 
-                // 强停顿一律断；弱停顿（逗号、顿号、波浪号…）要攒够字数才断，避免碎片化喵。
+                // 强停顿一律断；弱停顿（逗号、分号）要攒够字数才断，避免碎片化喵。
                 if (isStrong || currentText.length > minLength) {
                     if (currentText.isNotEmpty()) {
                         result.add(currentText)
@@ -167,10 +183,18 @@ class BurstAccumulator(
         /**
          * 强停顿符喵：出现就断，不受 [MIN_SEGMENT_LENGTH] 约束。
          *
-         * 逗号、顿号、波浪号这些是**弱**停顿——它们太密，一遇就断会把话切碎喵。
-         * 而句号、叹号、省略号在聊天里基本就等于"这一条说完了"，
+         * 逗号与分号是**弱**停顿——它们太密，一遇就断会把话切碎喵。
+         * 而句号、叹号、问号在聊天里基本就等于"这一条说完了"，
          * 前面哪怕只有两三个字也该收尾喵。
          */
-        private val STRONG_PAUSES = setOf('\n', '。', '！', '？', '!', '?', '…')
+        private val STRONG_PAUSES = setOf('\n', '。', '！', '？', '!', '?')
+
+        /**
+         * 段内断句用的标点喵。
+         *
+         * **只有这五个**（外加它们的美式写法与换行）喵：逗号、句号、叹号、问号、分号。
+         * 为什么收得这么窄，见 [splitByCommaAndPunctuation] 的说明喵。
+         */
+        private val DELIMITERS = Regex("([，,。！？!?；;\n]+)")
     }
 }
