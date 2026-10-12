@@ -64,11 +64,6 @@ class PetService : Service() {
                 stopSelf()
                 return START_NOT_STICKY
             }
-
-            ACTION_SAY -> {
-                val text = intent.getStringExtra(EXTRA_TEXT).orEmpty()
-                if (text.isNotBlank()) showBubble(text)
-            }
         }
         return START_STICKY
     }
@@ -263,8 +258,6 @@ class PetService : Service() {
         private const val CHANNEL_ID = "qingyu_pet"
         private const val NOTIFICATION_ID = 4101
         const val ACTION_HIDE = "com.qingyu.app.pet.HIDE"
-        const val ACTION_SAY = "com.qingyu.app.pet.SAY"
-        const val EXTRA_TEXT = "text"
 
         fun start(context: Context) {
             val intent = Intent(context, PetService::class.java)
@@ -279,13 +272,6 @@ class PetService : Service() {
 
         fun stop(context: Context) {
             context.stopService(Intent(context, PetService::class.java))
-        }
-
-        fun say(context: Context, text: String) {
-            val intent = Intent(context, PetService::class.java)
-                .setAction(ACTION_SAY)
-                .putExtra(EXTRA_TEXT, text)
-            runCatching { context.startService(intent) }
         }
     }
 }
