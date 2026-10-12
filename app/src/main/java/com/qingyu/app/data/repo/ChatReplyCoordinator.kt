@@ -89,6 +89,17 @@ class ChatReplyCoordinator(
      */
     val generatingFor: StateFlow<Long?> = _generatingFor.asStateFlow()
 
+    /**
+     * 界面**此刻正打开着**哪段对话；没打开任何对话就是 null喵。
+     *
+     * 由 [com.qingyu.app.ui.vm.ChatViewModel] 在进出对话时写入喵。
+     * 它只用来回答一件事："这条回复到达时，用户是不是正在看着它"喵。
+     *
+     * @Volatile 是必要的喵：写入在主线程，读它的是应用级作用域里的流水线协程喵。
+     */
+    @Volatile
+    var openConversationId: Long? = null
+
     private val batchTracker = SendBatchTracker()
     private val pipelineLock = Mutex()
 
@@ -246,6 +257,15 @@ class ChatReplyCoordinator(
                             if (replyBuffer.isNotEmpty()) replyBuffer.append('\n')
                             replyBuffer.append(event.message.content)
                         }
+                        // 用户没在看这段对话，就记一条未读喵（他进对话时会清零）喵。
+                        // 逐条计而不是整轮计一次喵：红点要的是"多少条消息"，
+                        // 角色连发三条就该是 3喵。思考过程不算——它的角色是 REASONING，
+                        // 根本进不到这个 ASSISTANT 分支里喵。
+                        if (openConversationId != request.conversationId) {
+                            val total = engine.bumpUnread(request.conversationId)
+                            // 顺手把桌面角标的下限（通知）同步一下喵。
+                            notifier.showUnreadSummary(total)
+                        }
                     }
                 }
                 // 广播给界面；带上对话 id，界面据此判断是不是自己那段喵。
@@ -272,13 +292,20 @@ class ChatReplyCoordinator(
     }
 
     /**
-     * 应用不在前台时，把这一轮的回复发成系统通知喵。
+     * 用户没在看这段对话时，把这一轮的结果发成系统通知喵。
      *
-     * 这正是"退出应用也一定要收到回复"的落点喵：回复已经落库，
-     * 通知负责把用户叫回来看喵。
+     * 判据是「**这条回复是不是正被用户看着**」，而不是「应用在不在前台」喵。
+     * 早先写的是"应用不可见才通知"，那留下一个很难受的空档：用户人在应用里、
+     * 停在主界面上，角色回了话——按旧规则不发通知（他"看得见"应用），
+     * 而主界面又没有未读标记，于是他**完全感知不到**这件事，
+     * 得自己点进那段对话才发现「哦，早回了」喵。
+     *
+     * 现在只要不是"正盯着这段对话"就通知：在看别的对话、在主界面、
+     * 或者已经退出应用，三种情况都会提醒喵。
      */
     private fun notifyIfBackground(request: ReplyRequest, event: ChatEvent) {
-        if (visibility.isVisible) return
+        // 正在看这段对话就不用打扰——他马上就会看到回复喵。
+        if (visibility.isVisible && openConversationId == request.conversationId) return
         val body = when (event) {
             is ChatEvent.Failed -> event.message.ifBlank { "这次没生成出内容来" }
             else -> replyBuffer.toString()
