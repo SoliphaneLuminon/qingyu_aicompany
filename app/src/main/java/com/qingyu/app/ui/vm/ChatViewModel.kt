@@ -87,11 +87,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // "正在输入"由流水线持有，界面跟着它走喵：这样即使界面是中途重建的，
         // 也能立刻显示正确的状态；同时只在**当前这段**对话正在生成时才显示喵。
         viewModelScope.launch {
-            coordinator.generatingFor.collect {
+            coordinator.generatingFor.collect { generatingId ->
                 _state.update { state ->
-                    state.copy(
-                        topBarTyping = coordinator.generatingFor.value == state.conversation?.id,
-                    )
+                    state.copy(topBarTyping = TypingIndicator.isTyping(state.conversation?.id, generatingId))
                 }
             }
         }
@@ -224,6 +222,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     conversation = conversation,
                     messages = messages,
                     stream = ChatStreamState(),
+                    // 这里必须**主动按当前值初始化一次**喵：用户可能中途退出去过，
+                    // 而这段对话正在后台生成——StateFlow 只在值**变化**时才再发，
+                    // 光靠订阅会漏掉"回到一段正在生成的对话"这种情况，
+                    // 于是明明在生成却不显示"正在输入"喵。
+                    topBarTyping = TypingIndicator.isTyping(conversation.id, coordinator.generatingFor.value),
                     lastContext = null,
                     banner = null,
                     needsSetup = container.settings.current.apiKey.isBlank(),
@@ -326,6 +329,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 conversation = null,
                 messages = emptyList(),
                 stream = ChatStreamState(),
+                // 离开对话就一定要收起"正在输入"喵：对话 id 已经没了，
+                // 而回复仍在后台跑，留着这个标记回列表页会显得莫名其妙喵。
+                topBarTyping = false,
                 lastContext = null,
                 input = "",
                 pendingAttachments = emptyList(),
