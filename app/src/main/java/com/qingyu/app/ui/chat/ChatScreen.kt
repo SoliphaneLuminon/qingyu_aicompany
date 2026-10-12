@@ -335,7 +335,12 @@ fun ChatScreen(
                                     is TimelineItem.Day -> "day-${item.label}"
                                     is TimelineItem.Msg -> "msg-${item.message.id}"
                                     is TimelineItem.Bubble -> "bubble-${item.bubble.id}-${item.bubble.timestamp}"
-                                    is TimelineItem.Reason -> "reason-${item.text.hashCode()}"
+                                    // **流式思考块用一个固定 key** 喵：它的文字每来一个 token 就变一次，
+                                    // 若把文字算进 key，每个 token 都会「删掉旧的、插入新的」——
+                                    // 叠加动画就是一堆半透明残影摞在背景上，而它们会一直堆到
+                                    // 模型想完、不再有新 token 为止喵。
+                                    // 同一时刻只会有一个实时思考块，固定 key 不会撞车喵。
+                                    is TimelineItem.Reason -> "reason-streaming"
                                 }
                             },
                             // 新消息插进来时，后面的项平滑让位而不是瞬移；
@@ -349,8 +354,13 @@ fun ChatScreen(
                                 }
                             },
                         ) { item ->
-                            // 每项单独的插入/位移过渡喵。
-                            val itemModifier = Modifier.animateItem()
+                            // 位移过渡保留：新消息插进来时，后面的项平滑让位而不是瞬移喵。
+                            //
+                            // 但**淡出必须关掉**（fadeOutSpec = null）喵。默认的淡出会把这个
+                            // 已经被移出列表的气泡继续留在屏幕上、慢慢变透明——用户看到的就是
+                            // 「原消息钉在另一层、融进背景里」，一直拖到流式结束、不再高频重组
+                            // 才终于消失喵。而「重新生成」的第一诉求恰恰是"点了旧的立刻就没"喵。
+                            val itemModifier = Modifier.animateItem(fadeOutSpec = null)
                             when (item) {
                                 is TimelineItem.Day -> DaySeparator(
                                     text = item.label,
