@@ -118,7 +118,7 @@ $env:JAVA_HOME = '<你的 JDK 路径>'
 $env:ANDROID_HOME = '<你的 Android SDK 路径>'
 
 .\gradlew.bat :app:assembleDebug          # 调试包，不需要签名
-.\gradlew.bat :app:testDebugUnitTest      # 验证：应输出 427 全部通过
+.\gradlew.bat :app:testDebugUnitTest      # 验证：应输出 448 全部通过
 ```
 
 | 产物 | 包名 | 说明 |
@@ -221,7 +221,7 @@ keyPassword=<你的口令>
 
 ## 四、测试覆盖
 
-**33 个测试类 / 427 个用例**，全部是纯 JVM 测试（不需要模拟器）。
+**35 个测试类 / 448 个用例**，全部是纯 JVM 测试（不需要模拟器）。
 跑 `.\gradlew.bat :app:testDebugUnitTest` 可复现。
 
 | 测试类 | 覆盖内容 |
@@ -248,14 +248,20 @@ keyPassword=<你的口令>
 | ImageScalingTest | 图片缩放：长边约束、宽高比、极端尺寸 |
 | ImageTurnMatcherTest | 图片挂到哪一行（挂错了只会"答非所问"，不报错） |
 | CustomVoiceParserTest | 外部音色信息解析：中英文标签、全角冒号、缺字段、非法输入 |
+| StickerPromptRenderingTest | 历史渲染：对方发的转述成旁注、自己发过的渲染成指令本身、同一张表情每次字面一致 |
+| StickerDirectiveTest | 发表情包指令的解析，以及"名字对不上就留着"的取舍 |
+| StickerEagernessTest | 温度 → 发表情包积极度（0.6 必须落在"有符合的就发"那一档） |
+| ReplySanitizerTest | 回复里被抄回来的系统旁注（含模板占位符）的清洗，以及"不能误杀"的反例 |
+| GarbledReplyTest | 乱码回复（UUID / 长十六进制）的识别与不误杀 |
+| TypingIndicatorTest | 「对方正在输入中」该不该亮，含 `null == null` 那个坑 |
 
 这几块是"输入不受我们控制"的地方——用户导出的文件、用户填的地址、用户装的插件脚本、
 **上游模型返回的报文与分片方式**、以及**发送给外部接口的请求体**，
 所以用纯函数 + 单元测试钉住，而不是靠手测。
 
-### 四处"静默失效"的陷阱
+### 五处"静默失效"的陷阱
 
-这四类错误都不会抛异常、不会崩溃，只会让功能悄悄失灵，所以都必须有测试：
+这五类错误都不会抛异常、不会崩溃，只会让功能悄悄失灵，所以都必须有测试：
 
 | 陷阱 | 症状 | 钉住它的测试 |
 | --- | --- | --- |
@@ -263,6 +269,7 @@ keyPassword=<你的口令>
 | 多模态 `content` 写成字符串而不是数组 | 模型完全看不见图 | `ChatPayloadTest` |
 | 图片挂到错误的一行（系统提示词里出现同样文字时） | 模型答非所问 | `ImageTurnMatcherTest` |
 | 搜索解析字段名对不上 | 联网开关开了却永远"没有来源" | `SearchResponseParserTest` |
+| 模型把上下文里的旁注抄回正文 | 聊天里出现「（表情包名字）」这种字段 | `ReplySanitizerTest` |
 
 ### 拆条状态机为什么要单独抽出来
 
