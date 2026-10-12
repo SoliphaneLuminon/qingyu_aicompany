@@ -48,9 +48,6 @@ import kotlinx.coroutines.withContext
  * 4. 查询在 IO 线程执行（`withContext(Dispatchers.IO)`），调用方无需再包一层喵。
  */
 
-/** Store 层内存缓存容量：缓存最近用到的 N 条，避免列表滚动时反复查库喵。 */
-private const val CAPACITY = 8
-
 internal inline fun <T> Cursor.useRows(map: (Cursor) -> T): List<T> {
     val out = ArrayList<T>(minOf(count, 256))
     use { c -> while (c.moveToNext()) out.add(map(c)) }
@@ -203,7 +200,44 @@ class ConversationStore(private val helper: DbHelper) {
         messageCount = int("message_count"),
         pinned = bool("pinned"),
         hidden = bool("hidden"),
+        // 防御式读喵：老库（或迁移到一半被打断的库）里可能还没有这一列喵。
+        // 读会话是启动路径上必经的一步，这里直接抛异常就等于"一打开就崩"喵。
+        unread = getColumnIndex("unread_count").takeIf { it >= 0 }?.let { getInt(it) } ?: 0,
     )
+
+    /**
+     * 给会话的未读数 +1，并返回加完之后的值喵。
+     *
+     * 写成 `unread_count = unread_count + 1` 而不是"读出来加一再写回去"喵：
+     * 后者在两条回复几乎同时落地时会丢计数——两边都读到 0，都写回 1喵。
+     */
+    suspend fun addUnread(id: Long): Int = write { db ->
+        db.execSQL(
+            "UPDATE conversations SET unread_count = unread_count + 1 WHERE id = ?",
+            arrayOf<Any>(id),
+        )
+        db.rawQuery("SELECT unread_count FROM conversations WHERE id = ?", arrayOf(id.toString()))
+            .useRows { it.getInt(0) }
+            .firstOrNull() ?: 0
+    }
+
+    /** 把会话的未读清零喵。用户进这段对话时调用喵。 */
+    suspend fun clearUnread(id: Long) = write { db ->
+        db.execSQL("UPDATE conversations SET unread_count = 0 WHERE id = ?", arrayOf<Any>(id))
+        Unit
+    }
+
+    /**
+     * 全部会话的未读之和喵。
+     *
+     * 刻意不走界面那份列表喵：主界面的列表是**过滤过的**（被移除的会话不在里面），
+     * 而红点该反映"一共还有多少条没看"——包括那些被移除、但还没读的会话喵。
+     */
+    suspend fun totalUnread(): Int = read { db ->
+        db.rawQuery("SELECT SUM(unread_count) FROM conversations", null).use { cursor ->
+            if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getInt(0) else 0
+        }
+    }
 
     private suspend fun <T> read(block: (android.database.sqlite.SQLiteDatabase) -> T): T =
         withContext(Dispatchers.IO) { block(helper.readableDatabase) }
@@ -452,35 +486,11 @@ class MessageStore(private val helper: DbHelper) {
             .useRows { it.toMessage() }.firstOrNull()
     }
 
-    suspend fun updateContent(id: Long, content: String, completed: Boolean = true, error: String? = null) = write { db ->
-        db.update(
-            "messages",
-            ContentValues().apply {
-                put("content", content)
-                put("completed", if (completed) 1 else 0)
-                if (error == null) putNull("error") else put("error", error)
-            },
-            "id = ?",
-            arrayOf(id.toString()),
-        )
-        Unit
-    }
-
     /** 给一条助手消息挂上它用到的联网来源喵。 */
     suspend fun updateSearchResults(id: Long, hits: List<com.qingyu.app.data.SearchHit>) = write { db ->
         db.update(
             "messages",
             ContentValues().apply { put("search_json", hits.toSearchJson()) },
-            "id = ?",
-            arrayOf(id.toString()),
-        )
-        Unit
-    }
-
-    suspend fun setReasoningDuration(id: Long, durationMs: Long) = write { db ->
-        db.update(
-            "messages",
-            ContentValues().apply { put("reasoning_duration", durationMs) },
             "id = ?",
             arrayOf(id.toString()),
         )
@@ -580,10 +590,26 @@ class AttachmentStore(private val helper: DbHelper) {
         db.insert("attachments", null, attachment.toValues())
     }
 
-    /** 一条消息落库后，把附件挂到它上面喵。 */
-    suspend fun attachToMessage(messageId: Long, attachments: List<com.qingyu.app.data.Attachment>) = write { db ->
+    /**
+     * 一条消息落库后，把附件挂到它上面喵。
+     *
+     * [conversationId] 非 0 时会**补上**附件缺失的会话归属喵：
+     * 图片导入得比"这段对话是谁"更早，那时它的 conversationId 还是 0，
+     * 而 [listForConversation] 是按 conversation_id 查的——落成 0 就再也查不回来，
+     * 表现为"发出去的图，消息一刷新就没了"喵。
+     */
+    suspend fun attachToMessage(
+        messageId: Long,
+        attachments: List<com.qingyu.app.data.Attachment>,
+        conversationId: Long = 0L,
+    ) = write { db ->
         attachments.forEach { attachment ->
-            db.insert("attachments", null, attachment.copy(messageId = messageId).toValues())
+            val owned = if (conversationId > 0L && attachment.conversationId <= 0L) {
+                attachment.copy(conversationId = conversationId)
+            } else {
+                attachment
+            }
+            db.insert("attachments", null, owned.copy(messageId = messageId).toValues())
         }
         Unit
     }
@@ -615,11 +641,6 @@ class AttachmentStore(private val helper: DbHelper) {
 
     suspend fun delete(id: Long) = write { db ->
         db.delete("attachments", "id = ?", arrayOf(id.toString()))
-        Unit
-    }
-
-    suspend fun deleteForConversation(conversationId: Long) = write { db ->
-        db.delete("attachments", "conversation_id = ?", arrayOf(conversationId.toString()))
         Unit
     }
 
@@ -949,12 +970,6 @@ class MemoryStore(private val helper: DbHelper) {
     suspend fun delete(id: Long) = write { db ->
         db.delete("memory_terms", "memory_id = ?", arrayOf(id.toString()))
         db.delete("memories", "id = ?", arrayOf(id.toString()))
-        Unit
-    }
-
-    suspend fun deleteForPersona(personaId: Long) = write { db ->
-        deleteMemoryIndexFor(db, "persona_id = ?", arrayOf(personaId.toString()))
-        db.delete("memories", "persona_id = ?", arrayOf(personaId.toString()))
         Unit
     }
 
