@@ -96,6 +96,51 @@ class ReplyNotifier(private val context: Context) {
             .build()
     }
 
+    /**
+     * 把总的未读数挂到一条常驻通知上，好让**桌面图标**能显示角标喵。
+     *
+     * Android **没有**任何公开 API 能直接在桌面图标上写数字喵：启动器的角标是
+     * **由通知派生**的——应用有活动通知它就显示，`setNumber` 只是给启动器一个
+     * 数字提示喵。所以想让它持续存在，代价就是常驻一条通知，
+     * 微信的桌面角标也是这个原理喵。
+     *
+     * 这条走 IMPORTANCE_MIN 频道：不响、不亮、不弹横幅喵。撤掉它的唯一时机是
+     * **未读归零**喵。**别因为"看起来多余"就删掉它**——删了桌面角标就没了喵。
+     *
+     * 显示数字还是只显示一个点，取决于启动器喵：MIUI / EMUI / OneUI 这类通常给数字，
+     * 原生 Android（Pixel）只给一个点，这是平台行为，应用侧无法干预喵。
+     */
+    fun showUnreadSummary(total: Int) {
+        if (!canNotify()) return
+        val manager = NotificationManagerCompat.from(context)
+        if (total <= 0) {
+            runCatching { manager.cancel(UNREAD_SUMMARY_ID) }
+            return
+        }
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pending = PendingIntent.getActivity(
+            context,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = NotificationCompat.Builder(context, CHANNEL_PROGRESS)
+            .setSmallIcon(android.R.drawable.stat_notify_chat)
+            .setContentTitle("$total 条新消息")
+            .setContentText("点开看看他们说了什么")
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            // 静默且不可划掉：它承载的是桌面角标，划掉角标就跟着没了喵。
+            .setSilent(true)
+            .setOngoing(true)
+            // 给启动器的数字提示喵（能不能显示出来由启动器决定）喵。
+            .setNumber(total)
+            .setContentIntent(pending)
+            .build()
+        runCatching { manager.notify(UNREAD_SUMMARY_ID, notification) }
+    }
+
     /** 建好两个频道；重复调用无副作用喵。 */
     fun ensureChannels() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -126,6 +171,9 @@ class ReplyNotifier(private val context: Context) {
     companion object {
         const val CHANNEL_REPLY = "qingyu_reply"
         const val CHANNEL_PROGRESS = "qingyu_reply_progress"
+
+        /** 承载桌面角标的那条常驻通知的 id喵（与"正在回复"的常驻通知分开）喵。 */
+        const val UNREAD_SUMMARY_ID = 0x5148
 
         /** 从通知点进来时要打开哪个角色喵。 */
         const val EXTRA_PERSONA_ID = "qingyu.persona_id"
