@@ -105,6 +105,22 @@ class ChatEngine(
 
     suspend fun history(conversationId: Long): List<ChatMessage> = messages.list(conversationId).withAttachments(conversationId)
 
+    // ------------------------------------------------------------ 未读
+
+    /**
+     * 给某段对话的未读数 +1，返回加完后的值喵。
+     *
+     * 只是把 [com.qingyu.app.data.db.ConversationStore] 转交出来喵：加未读这件事
+     * 发生在生成流水线那一侧，而流水线不该直接抓数据库、绕过引擎这层封装喵。
+     */
+    suspend fun bumpUnread(conversationId: Long): Int = conversations.addUnread(conversationId)
+
+    /** 把某段对话的未读清零喵。用户进这段对话时调用喵。 */
+    suspend fun clearUnread(conversationId: Long) = conversations.clearUnread(conversationId)
+
+    /** 全部未读之和喵，界面标签与桌面角标都要用喵。 */
+    suspend fun totalUnread(): Int = conversations.totalUnread()
+
     /** 把整段会话的附件按消息分组挂上，避免逐条查库喵。 */
     private suspend fun List<ChatMessage>.withAttachments(conversationId: Long): List<ChatMessage> {
         val all = db.attachments.listForConversation(conversationId)
@@ -144,7 +160,13 @@ class ChatEngine(
         )
         val id = messages.insert(message)
         if (attachments.isNotEmpty()) {
-            db.attachments.attachToMessage(id, attachments)
+            // **必须把对话 id 补上**喵：图片是在"还不知道要发给哪段对话"时导入的，
+            // 那时它的 conversationId 还是 0；而 [history] 是按 conversation_id 查附件的，
+            // 落成 0 就等于这条消息再也查不到图——
+            // 用户看到的是"发出去时还在、消息一刷新就没了"喵。
+            val stamped = attachments.map { it.copy(conversationId = conversationId) }
+            db.attachments.attachToMessage(id, stamped, conversationId)
+            return message.copy(id = id, attachments = stamped)
         }
         return message.copy(id = id)
     }
@@ -490,21 +512,23 @@ class ChatEngine(
         var savedStickerCount = 0
         val accumulator = BurstAccumulator { segment ->
             val persisted = persistBubble(conversationId, segment, savedReplies.size)
-            // 表情先上屏：时间戳排在文字之前也行，反正它们各是独立一条喵。
-            persisted.stickers.forEach { emit(ChatEvent.Saved(it)) }
             savedStickerCount += persisted.stickers.size
             val saved = persisted.bubble
-            // null 表示这一段只有表情、没有文字：表情已经发过 Saved 事件了，
-            // 这里不能再拿一条空文本去顶替它喵。
-            if (saved == null) {
-                // 段数仍要推进，否则下一段的时间戳会与这一段的挤在一起喵。
+            if (saved != null) {
+                savedIds.add(saved.id)
+                savedReplies.add(saved.text)
+                state = state.copy(bubbles = state.bubbles + saved)
+                // **文字先上屏、表情后上屏**喵：persistBubble 给表情的时间戳排在文字之后
+                // （now + order + index + 1），先发文字才与时间戳的顺序一致喵。
+                // 反过来的话表情会插到它本该在的那句话前面，要等整轮结束 reload 才被摆正——
+                // 用户看到的就是"表情先冒出来、位置还不对"喵。
+                emit(ChatEvent.Saved(saved.toMessage(conversationId)))
+            } else {
+                // null 表示这一段只有表情、没有文字。段数仍要推进，
+                // 否则下一段的时间戳会与这一段的挤在一起喵。
                 savedReplies.add("")
-                return@BurstAccumulator
             }
-            savedIds.add(saved.id)
-            savedReplies.add(saved.text)
-            state = state.copy(bubbles = state.bubbles + saved)
-            emit(ChatEvent.Saved(saved.toMessage(conversationId)))
+            persisted.stickers.forEach { emit(ChatEvent.Saved(it)) }
         }
 
         try {
@@ -652,24 +676,28 @@ class ChatEngine(
                 stickerId = sticker.id,
             )
             val id = messages.insert(message)
+            val attachment = Attachment(
+                messageId = id,
+                conversationId = conversationId,
+                kind = AttachmentKind.IMAGE,
+                localPath = sticker.filePath,
+                mimeType = sticker.mimeType,
+                width = sticker.width,
+                height = sticker.height,
+                sizeBytes = runCatching { File(sticker.filePath).length() }.getOrDefault(0L),
+                createdAt = timestamp,
+            )
             db.attachments.attachToMessage(
                 messageId = id,
-                attachments = listOf(
-                    Attachment(
-                        messageId = id,
-                        conversationId = conversationId,
-                        kind = AttachmentKind.IMAGE,
-                        localPath = sticker.filePath,
-                        mimeType = sticker.mimeType,
-                        width = sticker.width,
-                        height = sticker.height,
-                        sizeBytes = runCatching { File(sticker.filePath).length() }.getOrDefault(0L),
-                        createdAt = timestamp,
-                    ),
-                ),
+                attachments = listOf(attachment),
+                conversationId = conversationId,
             )
             db.stickers.markUsed(sticker.id)
-            message.copy(id = id)
+            // **把附件一起带回去**喵：这条消息是直接上屏的（见调用方），
+            // 不带附件的话界面拿不到图，只能退化成占位符，
+            // 要等整轮结束 reload 才从库里读回图——用户看到的就是
+            // "表情先冒出个名字/占位、位置还不对，过一会儿才变成图"喵。
+            message.copy(id = id, attachments = listOf(attachment))
         }
 
         // 挡掉"只是个标识符"的行喵（见 [GarbledReply]）：有用户反馈过偶尔收到一条
