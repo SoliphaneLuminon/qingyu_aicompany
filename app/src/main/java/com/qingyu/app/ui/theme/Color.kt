@@ -22,7 +22,6 @@ val QyTertiaryContainer = Color(0xFFE8EEF7)
 val QyOnTertiaryContainer = Color(0xFF2E3F5E)
 
 val QySurface = Color(0xFFFFFFFF)          // 页面 / 卡片：白喵
-val QySurfaceDim = Color(0xFFF2F2F2)
 val QySurfaceContainer = Color(0xFFF7F7F7) // 列表 / 面板：浅灰喵
 val QySurfaceContainerHigh = Color(0xFFEDEDED)
 val QyOnSurface = Color(0xFF111111)        // 主文字喵
