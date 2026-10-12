@@ -4,6 +4,7 @@ import com.qingyu.app.data.ChatMessage
 import com.qingyu.app.data.MessageKind
 import com.qingyu.app.data.MessageRole
 import com.qingyu.app.data.Persona
+import com.qingyu.app.data.repo.StickerDirective
 import com.qingyu.app.data.repo.StickerEagerness
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -51,8 +52,11 @@ class StickerPromptRenderingTest {
     }
 
     @Test
-    fun `助手发的表情渲染成你发了`() {
-        // 若不区分角色，模型会以为那是用户发的，可能回一句"你发的这个好可爱"——自己夸自己喵。
+    fun `助手发过的表情渲染成它该写的指令本身`() {
+        // 这是"回复里掺杂（你发来一个表情包（表情包名字））"的根因喵：
+        // 助手那一侧的历史原本也写成旁注，模型看到"我以前是这么说话的"，
+        // 就照着抄回正文，用户于是收到一条以假乱真的旁注喵。
+        // 现在渲染成指令本身——**照抄自己与正确输出变成同一件事**喵。
         val turns = PromptBuilder.turns(
             persona = persona(),
             memories = emptyList(),
@@ -62,8 +66,39 @@ class StickerPromptRenderingTest {
             historyLimit = 20,
         )
         val content = turns.last().content
-        assertTrue("应当写明是自己发的：$content", content.contains("你发了"))
-        assertTrue("不该说成对方发的：$content", !content.contains("对方发来"))
+        assertEquals("自己发过的表情就该是合法指令", "【表情包：笑到打滚】", content)
+        assertTrue("不该再出现旁注形态：$content", !content.contains("你发了"))
+    }
+
+    @Test
+    fun `自己发过的表情渲染结果能被指令解析器认回来`() {
+        // 渲染与解析必须是同一套约定，否则"照抄自己"仍会漏成正文文字喵。
+        val rendered = PromptBuilder.turns(
+            persona = persona(),
+            memories = emptyList(),
+            history = listOf(assistantSticker("笑到打滚")),
+            suffix = "",
+            burstReplies = false,
+            historyLimit = 20,
+        ).last().content
+
+        val parsed = StickerDirective.parse(rendered, setOf("笑到打滚"))
+        assertEquals("正文该被剥空", "", parsed.text)
+        assertEquals("该解析回同一个表情", listOf("笑到打滚"), parsed.stickerNames)
+    }
+
+    @Test
+    fun `对方发的表情仍渲染成旁注且不带多余空格`() {
+        // 对方不会写指令，只能由我们转述"这是一个表情、不是两个汉字"喵。
+        val content = PromptBuilder.turns(
+            persona = persona(),
+            memories = emptyList(),
+            history = listOf(userSticker("开心")),
+            suffix = "",
+            burstReplies = false,
+            historyLimit = 20,
+        ).last().content
+        assertEquals("（对方发来一个表情包：开心）", content)
     }
 
     @Test
