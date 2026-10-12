@@ -402,6 +402,15 @@ object PromptBuilder {
         '哟', '喔', '诶', '唉', '哈', '喂', '嘞', '咯', '噢', '嘿',
     )
 
+    /**
+     * 这个字是不是"可以在此收句"的语气助词喵。
+     *
+     * 单独开一个判断口子，是为了让 [com.qingyu.app.data.repo.CommaRepair]
+     * 与这里的断句逻辑**共用同一份定义**喵：两处对"哪里能停"的看法必须一致，
+     * 否则会出现"这里能断成两条、那里却不肯补逗号"这种自相矛盾的行为喵。
+     */
+    fun isSoftBreakTail(c: Char): Boolean = c in SOFT_BREAK_TAIL
+
     /** 一整段没有任何标点时，超过这个长度才动用 [splitLongRun] 喵。 */
     const val MAX_RUN_LENGTH = 18
 
