@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -54,6 +55,7 @@ import com.qingyu.app.data.ChatListEntry
 import com.qingyu.app.data.Persona
 import com.qingyu.app.ui.components.EmptyState
 import com.qingyu.app.ui.components.PersonaAvatar
+import com.qingyu.app.ui.components.UnreadBadge
 import com.qingyu.app.ui.theme.LocalDarkTheme
 import com.qingyu.app.ui.theme.QyChatRowNormalDark
 import com.qingyu.app.ui.theme.QyChatRowNormalLight
@@ -315,7 +317,17 @@ private fun ChatRow(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        PersonaAvatar(persona = persona, size = 48.dp, emphasize = true)
+        // 未读红点贴在头像右上角喵：微信就是这个位置，扫一眼就能看到喵。
+        // 往右上各偏 6dp，让它压住头像边缘而不是缩在里面——缩在里面会显得像头像的一部分喵。
+        Box {
+            PersonaAvatar(persona = persona, size = 48.dp, emphasize = true)
+            UnreadBadge(
+                count = conversation?.unread ?: 0,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 6.dp, y = (-6).dp),
+            )
+        }
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
