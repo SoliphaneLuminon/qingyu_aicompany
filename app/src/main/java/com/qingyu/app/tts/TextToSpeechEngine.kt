@@ -3,9 +3,6 @@ package com.qingyu.app.tts
 import android.content.Context
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import java.util.Locale
 import java.util.UUID
 
@@ -20,15 +17,6 @@ class TextToSpeechEngine(private val context: Context) {
 
     private var engine: TextToSpeech? = null
 
-    private val _ready = MutableStateFlow(false)
-    val ready: StateFlow<Boolean> = _ready.asStateFlow()
-
-    private val _speaking = MutableStateFlow(false)
-    val speaking: StateFlow<Boolean> = _speaking.asStateFlow()
-
-    private val _lastError = MutableStateFlow<String?>(null)
-    val lastError: StateFlow<String?> = _lastError.asStateFlow()
-
     private var pendingLocale: Locale = Locale.SIMPLIFIED_CHINESE
 
     /** 首次调用时异步初始化系统 TTS 引擎喵。 */
@@ -39,23 +27,16 @@ class TextToSpeechEngine(private val context: Context) {
                 applyLocale(pendingLocale)
                 engine?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
-                        _speaking.value = true
                     }
 
                     override fun onDone(utteranceId: String?) {
-                        _speaking.value = false
                     }
 
                     @Deprecated("系统回调", ReplaceWith(""))
                     override fun onError(utteranceId: String?) {
-                        _speaking.value = false
-                        _lastError.value = "朗读失败：系统语音引擎报错"
                     }
                 })
-                _ready.value = true
             } else {
-                _ready.value = false
-                _lastError.value = "系统没有可用的语音引擎"
             }
         }
     }
@@ -90,26 +71,22 @@ class TextToSpeechEngine(private val context: Context) {
         warmUp()
         val tts = engine
         if (tts == null) {
-            _lastError.value = "语音引擎还没准备好"
             return
         }
         val queueMode = if (flush) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
         val result = tts.speak(clean, queueMode, null, UUID.randomUUID().toString())
         if (result == TextToSpeech.ERROR) {
-            _lastError.value = "朗读失败"
         }
     }
 
     fun stop() {
         engine?.stop()
-        _speaking.value = false
     }
 
     fun shutdown() {
         engine?.stop()
         engine?.shutdown()
         engine = null
-        _ready.value = false
     }
 
     /** 去掉不适合朗读的符号与 Markdown，避免念出"星号星号"喵。 */
