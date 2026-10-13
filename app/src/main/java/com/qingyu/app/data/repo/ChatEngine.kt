@@ -196,6 +196,38 @@ class ChatEngine(
     }
 
     /**
+     * 让角色**主动开话**喵（定时任务用）。
+     *
+     * 与 [generate] 的区别只有一处：会临时往上下文里插一句"开话由头"喵。
+     *
+     * **为什么必须有这个由头**喵：不插的话，模型看到的历史最后一条是它自己
+     * 上次说的话，于是它会接着那句话往下说——用户看到的是"角色自言自语"，
+     * 或者干脆回一句"嗯嗯"这种没有信息量的东西喵。
+     * 明确告诉它"现在轮到你主动开口了"，它才会真的找话题喵。
+     *
+     * 这句由头**只进请求、不落库**喵：它是给模型的舞台提示，
+     * 不是对话内容；落库会让用户在自己的聊天记录里看到一句莫名其妙的话喵。
+     */
+    fun generateProactive(
+        conversationId: Long,
+        personaId: Long,
+        searchRequested: Boolean = false,
+    ): Flow<ChatEvent> = flow {
+        val settings = settingsStore.current
+        val persona = db.personas.get(personaId) ?: run {
+            emit(ChatEvent.Failed("角色不存在"))
+            return@flow
+        }
+        generateInto(
+            conversationId = conversationId,
+            persona = persona,
+            settings = settings,
+            searchRequested = searchRequested,
+            proactiveCue = true,
+        ).collect { emit(it) }
+    }
+
+    /**
      * 发送一条用户消息并流式接收回复喵。
      *
      * @param existingUserMessageId 若消息已经落库（例如失败重试），传入其 id 避免重复插入喵。
@@ -376,11 +408,32 @@ class ChatEngine(
         return ImageTurnMatcher.attach(turns, lastUserMessage.content, dataUrls)
     }
 
+    /**
+     * 主动开话时补在末尾的那句舞台提示喵。
+     *
+     * 写成"用户侧"的一句话，是因为模型对 user 轮的反应就是"该我回了"喵。
+     * 内容刻意**不指定话题**：让角色按人设、记忆与当前时段自己找话头，
+     * 指定了反而会让每次主动消息都长得差不多喵。
+     *
+     * 明确要求"别提这是自动消息"喵：那会立刻把角色打回机器，
+     * 用户要的是"它想起我了"，不是"一个定时任务触发了"喵。
+     */
+    private val PROACTIVE_CUE = """
+        （现在距离你们上次说话已经过去了一段时间，你忽然想起了对方，想主动说句话。）
+        请你以角色本人的身份，主动开口聊一句。
+        要求：
+        1. 结合你们的关系、你记得的事、以及现在的时间，挑一个自然的话头；
+        2. 不要提"自动""定时""系统"这类词，也不要解释你为什么忽然说话——就像你真的刚好想起了对方；
+        3. 简短、口语化，一到两句就够。
+    """.trimIndent()
+
     private fun generateInto(
         conversationId: Long,
         persona: Persona,
         settings: AppSettings,
         searchRequested: Boolean = false,
+        /** 这一轮是"角色主动开话"喵（定时任务），要额外给模型一句开话由头喵。 */
+        proactiveCue: Boolean = false,
     ): Flow<ChatEvent> = flow {
         val startedAt = TimeUtil.now()
         val stream = ChatStreamState(generating = true)
@@ -471,6 +524,11 @@ class ChatEngine(
             built.toMutableList().also { it[systemIndex] = ChatTurn("system", systemContent) }
         } else {
             built
+        }.let { list ->
+            // 主动开话：往末尾补一条**只进请求、不落库**的用户侧提示喵。
+            // 见 [generateProactive] 的说明——没有它，模型会接着自己上一句话往下说，
+            // 用户看到的就是"角色自言自语"喵。
+            if (proactiveCue) list + ChatTurn("user", PROACTIVE_CUE) else list
         }
 
         // 到这里 turns 已经是"最终形态"：润色结果已替换进 system、图片已挂好、联网资料已拼进去喵。
