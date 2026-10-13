@@ -31,6 +31,30 @@ val QyOutlineVariant = Color(0xFFE5E5E5)   // 分隔线喵
 val QyError = Color(0xFFFA5151)            // 微信红喵
 val QyOnError = Color(0xFFFFFFFF)
 
+// ---------------------------------------------------------------- 补全的语义槽
+// Material 3 有三十来个颜色槽，而 Theme.kt 原本只设了 22 个喵。
+// 没设的那些会**静默退回 Material 基线值**——那是带紫调的（#F7F2FA 之类），
+// 于是白灰的微信界面上会浮出一层淡紫，而且极难联想到"是主题漏设了槽"喵。
+// 下面这几个都是 UI 里实际用到、却没被赋值的槽喵。
+
+/** 比 [QySurfaceContainer] 更浅一档的面板底：输入栏、贴纸面板喵。 */
+val QySurfaceContainerLow = Color(0xFFFAFAFA)
+
+/**
+ * 反色表面：用在深色底上的前景喵。
+ *
+ * 图片查看器把文字与图标画在近黑的底上，用的就是这一对槽喵。
+ */
+val QyInverseOnSurface = Color(0xFFFFFFFF)
+val QyInverseSurface = Color(0xFF303030)
+
+/** 模态遮罩喵。 */
+val QyScrim = Color(0x99000000)
+
+/** 错误容器：需要"红底红字"提示时用喵。 */
+val QyErrorContainer = Color(0xFFFFE5E5)
+val QyOnErrorContainer = Color(0xFF8C1F1F)
+
 // ---------------------------------------------------------------- 暗色
 val QyPrimaryDarkTheme = Color(0xFF07C160)
 val QyOnPrimaryDark = Color(0xFFFFFFFF)
@@ -46,6 +70,24 @@ val QyOutlineDark = Color(0xFF3A3A3A)
 val QyTertiaryDark = Color(0xFF8A9CC3)
 val QyOnTertiaryContainerDark = Color(0xFFD6E1F7)
 val QyTertiaryContainerDark = Color(0xFF2C3D5E)
+
+/** 暗色下比 [QySurfaceContainerDark] 更深一档：输入栏、面板要"沉下去"喵。 */
+val QySurfaceContainerLowDark = Color(0xFF141414)
+
+/**
+ * 暗色下的反色前景喵。
+ *
+ * **这一条修的是一个真 bug**喵：图片查看器把文字与图标画在
+ * 近黑的底上，用的正是 `inverseOnSurface`喵。原来主题没设这个槽，
+ * 它退回基线值（暗色下约 #313033 的深灰）——**深灰压近黑，等于看不见**喵。
+ * 所以这里明确给成浅色喵。
+ */
+val QyInverseOnSurfaceDark = Color(0xFFF2F2F2)
+val QyInverseSurfaceDark = Color(0xFFE8E8E8)
+
+/** 暗色下的错误容器：要"暗红底 + 浅红字"，而不是亮红喵。 */
+val QyErrorContainerDark = Color(0xFF4A1F1F)
+val QyOnErrorContainerDark = Color(0xFFFFB4B4)
 
 // ---------------------------------------------------------------- 聊天气泡
 // 微信聊天页：浅色背景是经典灰 #EDEDED，暗色是 #191919喵。
