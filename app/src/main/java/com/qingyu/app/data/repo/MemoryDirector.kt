@@ -4,13 +4,17 @@ import com.qingyu.app.core.TimeUtil
 import com.qingyu.app.core.memory.BioRhythm
 import com.qingyu.app.core.memory.MemoryDecay
 import com.qingyu.app.core.memory.MemoryRecall
+import com.qingyu.app.core.memory.MemoryReranker
 import com.qingyu.app.core.memory.MemoryTextIndex
 import com.qingyu.app.core.memory.RecallConfig
 import com.qingyu.app.core.memory.RecallDecision
+import com.qingyu.app.core.memory.RerankOutcome
 import com.qingyu.app.core.memory.TemporalContext
+import com.qingyu.app.core.memory.UtilityLlm
 import com.qingyu.app.data.AppSettings
 import com.qingyu.app.data.MemoryItem
 import com.qingyu.app.data.db.QingYuDatabase
+import com.qingyu.app.data.rerankConfig
 
 /** 一次记忆准备的结果喵。 */
 data class MemoryContext(
@@ -24,6 +28,15 @@ data class MemoryContext(
     val temporal: TemporalContext,
     /** 本轮新剪枝的记忆 id，供后续异步小模型优化压缩喵。 */
     val prunedIds: List<Long> = emptyList(),
+    /**
+     * 本轮精排的结论喵。
+     *
+     * 它是"为什么记忆没注入"这个问题的**第一手答案**喵：
+     * 没有它，用户看到记忆是空的，无法区分"没有相关记忆""精排挂了""开关没开"喵。
+     */
+    val rerankOutcome: RerankOutcome = RerankOutcome.DISABLED,
+    /** 靠模型判定**越过骰子**被救回来的条数喵。 */
+    val rescuedCount: Int = 0,
 )
 
 /**
@@ -35,7 +48,23 @@ data class MemoryContext(
  * 这里**不做任何网络请求**：是否记得住、想不想得起来必须是本地的确定性行为喵，
  * 网络一抖就"失忆"是不可以接受的。提炼（写记忆）才走网络，而且是异步的喵。
  */
-class MemoryDirector(private val db: QingYuDatabase) {
+class MemoryDirector(
+    private val db: QingYuDatabase,
+    /**
+     * 精排用的模型执行器喵。
+     *
+     * **它接的是"小模型"那条通路，但默认配置指向主模型**喵
+     * （见 [com.qingyu.app.data.rerankConfig] 与 `UtilityProvider.MAIN`）——
+     * 用户的要求就是"先用主模型判定，但预留小模型接口"喵。
+     * 以后要换成真正的后台小模型，改设置里的 provider 即可，
+     * 这里一行都不用动喵。
+     */
+    private val rerankerLlm: UtilityLlm? = null,
+    /** 主模型的连接信息：provider = MAIN 时精排复用它喵。 */
+    private val mainEndpoint: () -> String = { "" },
+    private val mainModel: () -> String = { "" },
+    private val mainApiKey: () -> String = { "" },
+) {
 
     /**
      * 准备好本轮要注入的上下文喵。
@@ -73,8 +102,10 @@ class MemoryDirector(private val db: QingYuDatabase) {
         }
 
         val decisions = recallFor(personaId, query, advance.turn, settings)
-        val recalled = MemoryRecall.recalled(decisions)
-        // 4. 只给"真的想起来了"的记忆刷新冷却起点——被屏蔽的不算出现过喵。
+        // 4. 精排：拿模型做语义交叉比对，把"统计没选中但语义相关"的救回来喵。
+        val reranked = rerank(decisions, query, settings)
+        val recalled = MemoryRecall.recalled(reranked.decisions)
+        // 5. 只给"真的想起来了"的记忆刷新冷却起点——被屏蔽的不算出现过喵。
         if (recalled.isNotEmpty()) {
             db.memories.markRecalled(recalled.map { it.id }, advance.turn, now)
         }
@@ -82,12 +113,44 @@ class MemoryDirector(private val db: QingYuDatabase) {
         return MemoryContext(
             turn = advance.turn,
             memories = recalled,
-            decisions = decisions,
+            decisions = reranked.decisions,
             temporal = temporal,
             prunedIds = decayOutcome?.prunedIds.orEmpty(),
+            rerankOutcome = reranked.outcome,
+            rescuedCount = reranked.rescuedCount,
         )
     }
 
+    /**
+     * 跑一次精排喵。
+     *
+     * 抽成私有方法是因为 [prepare] 与 [preview] **必须走同一套**喵：
+     * 自检页显示的东西一旦不等于真正发出去的东西，那一页就失去了意义喵。
+     */
+    private suspend fun rerank(
+        decisions: List<RecallDecision>,
+        query: String,
+        settings: AppSettings,
+    ): com.qingyu.app.core.memory.RerankResult {
+        if (decisions.isEmpty()) {
+            return com.qingyu.app.core.memory.RerankResult(
+                decisions,
+                RerankOutcome.DISABLED,
+            )
+        }
+        val config = settings.rerankConfig()
+        return MemoryReranker.rerank(
+            decisions = decisions,
+            query = query,
+            recalledCount = decisions.count { it.recalled },
+            limit = configFor(settings).limit,
+            config = config,
+            llm = rerankerLlm,
+            mainEndpoint = mainEndpoint(),
+            mainModel = mainModel(),
+            mainApiKey = mainApiKey(),
+        )
+    }
     /**
      * 只读预览：和 [prepare] 用**同一套**检索与唤醒规则，但一步都不写库喵。
      *
@@ -111,7 +174,17 @@ class MemoryDirector(private val db: QingYuDatabase) {
         // 用当前已落库的轮次，不推进它喵。
         val turn = db.memories.turnOf(conversationId).coerceAtLeast(1)
         val decisions = recallFor(personaId, query, turn, settings)
-        return MemoryContext(turn, MemoryRecall.recalled(decisions), decisions, temporal)
+        // 预览也走精排喵：否则自检页显示的记忆与实际注入的会不一样，
+        // 而"预览"这个功能的全部价值就在于**忠实**喵。
+        val reranked = rerank(decisions, query, settings)
+        return MemoryContext(
+            turn = turn,
+            memories = MemoryRecall.recalled(reranked.decisions),
+            decisions = reranked.decisions,
+            temporal = temporal,
+            rerankOutcome = reranked.outcome,
+            rescuedCount = reranked.rescuedCount,
+        )
     }
 
     /**
