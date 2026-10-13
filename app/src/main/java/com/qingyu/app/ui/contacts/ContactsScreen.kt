@@ -2,8 +2,6 @@ package com.qingyu.app.ui.contacts
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -59,6 +57,7 @@ import com.qingyu.app.data.Persona
 import com.qingyu.app.ui.components.EmptyState
 import com.qingyu.app.ui.components.PersonaAvatar
 import kotlinx.coroutines.launch
+import com.qingyu.app.ui.theme.Motion
 
 /**
  * 通讯录：管理所有角色喵。
@@ -205,10 +204,10 @@ fun ContactsScreen(
 private fun IndexBubble(letter: String?, modifier: Modifier = Modifier) {
     AnimatedVisibility(
         visible = letter != null,
-        enter = fadeIn(animationSpec = tween(90)) +
-            scaleIn(animationSpec = spring(dampingRatio = 0.6f, stiffness = 900f), initialScale = 0.8f),
-        exit = fadeOut(animationSpec = tween(140)) +
-            scaleOut(animationSpec = tween(140), targetScale = 0.9f),
+        enter = fadeIn(animationSpec = Motion.fade) +
+            scaleIn(animationSpec = Motion.snappy, initialScale = 0.8f),
+        exit = fadeOut(animationSpec = Motion.fade) +
+            scaleOut(animationSpec = Motion.snappy, targetScale = 0.9f),
         modifier = modifier,
     ) {
         Box(
@@ -292,7 +291,7 @@ private fun ContactRow(persona: Persona, onClick: () -> Unit) {
         } else {
             MaterialTheme.colorScheme.surface
         },
-        animationSpec = tween(120),
+        animationSpec = Motion.color,
         label = "contactRowBg",
     )
     Row(
