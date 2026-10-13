@@ -4,8 +4,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -95,6 +93,7 @@ import com.qingyu.app.ui.vm.DataViewModel
 import com.qingyu.app.ui.vm.ModelSlot
 import com.qingyu.app.ui.vm.SettingsViewModel
 import android.provider.Settings as AndroidSettings
+import com.qingyu.app.ui.theme.Motion
 
 /** Android 11 起不再需要这个权限，低版本必须检查喵。 */
 private fun canDrawOverlays(context: android.content.Context): Boolean =
@@ -1002,13 +1001,13 @@ private fun CollapsibleSettingsSection(
     val scheme = MaterialTheme.colorScheme
     val arrowRotation by animateFloatAsState(
         targetValue = if (expanded) 0f else -90f,
-        animationSpec = spring(dampingRatio = 0.75f, stiffness = 700f),
+        animationSpec = Motion.snappy,
         label = "sectionArrow",
     )
     // 展开时标题行底色略深，收起时透明：让"哪一段是打开的"一眼可辨喵。
     val headerTint by animateColorAsState(
         targetValue = if (expanded) scheme.primary.copy(alpha = 0.06f) else Color.Transparent,
-        animationSpec = tween(durationMillis = 200),
+        animationSpec = Motion.color,
         label = "sectionHeaderTint",
     )
     Row(
@@ -1041,14 +1040,12 @@ private fun CollapsibleSettingsSection(
     }
     AnimatedVisibility(
         visible = expanded,
-        enter = expandVertically(
-            animationSpec = spring(dampingRatio = 0.8f, stiffness = 500f),
-            expandFrom = Alignment.Top,
-        ) + fadeIn(animationSpec = tween(140)),
-        exit = shrinkVertically(
-            animationSpec = spring(dampingRatio = 0.9f, stiffness = 600f),
-            shrinkTowards = Alignment.Top,
-        ) + fadeOut(animationSpec = tween(90)),
+        // 折叠展开用**临界阻尼**喵：原来 enter 是 0.8、exit 是 0.9，
+        // 都是欠阻尼——面板会稍微过冲一下再弹回来，那是"Q 弹"不是"平滑"喵。
+        enter = expandVertically(animationSpec = Motion.size, expandFrom = Alignment.Top) +
+            fadeIn(animationSpec = Motion.fade),
+        exit = shrinkVertically(animationSpec = Motion.size, shrinkTowards = Alignment.Top) +
+            fadeOut(animationSpec = Motion.fade),
     ) {
         Column { content() }
     }
@@ -1111,7 +1108,7 @@ private fun SliderRow(
             val bump = remember { Animatable(1f) }
             LaunchedEffect(valueText) {
                 bump.snapTo(1.18f)
-                bump.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 650f))
+                bump.animateTo(1f, Motion.snappy)
             }
             Text(
                 text = valueText,
@@ -1358,17 +1355,17 @@ private fun SelectableChip(text: String, selected: Boolean, onClick: () -> Unit)
     val scheme = MaterialTheme.colorScheme
     val container by animateColorAsState(
         targetValue = if (selected) scheme.primaryContainer else scheme.surfaceContainerHigh,
-        animationSpec = tween(durationMillis = 180),
+        animationSpec = Motion.color,
         label = "chipContainer",
     )
     val content by animateColorAsState(
         targetValue = if (selected) scheme.onPrimaryContainer else scheme.onSurfaceVariant,
-        animationSpec = tween(durationMillis = 180),
+        animationSpec = Motion.color,
         label = "chipContent",
     )
     val scale by animateFloatAsState(
         targetValue = if (selected) 1f else 0.96f,
-        animationSpec = spring(dampingRatio = 0.7f, stiffness = 700f),
+        animationSpec = Motion.snappy,
         label = "chipScale",
     )
     Box(
