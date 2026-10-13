@@ -51,6 +51,7 @@ import com.qingyu.app.modules.ModuleManifest
 import com.qingyu.app.ui.components.EmptyState
 import com.qingyu.app.ui.vm.ModulesViewModel
 import androidx.activity.compose.rememberLauncherForActivityResult
+import com.qingyu.app.ui.theme.Radius
 
 /**
  * 模块页喵。
@@ -170,7 +171,7 @@ private fun ModuleCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = Radius.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
@@ -231,7 +232,7 @@ private fun ModuleCard(
                     fontFamily = FontFamily.Monospace,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
+                        .clip(Radius.small)
                         .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                         .padding(10.dp),
                 )
