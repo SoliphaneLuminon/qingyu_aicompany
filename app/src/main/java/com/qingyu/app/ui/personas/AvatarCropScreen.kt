@@ -51,14 +51,15 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.qingyu.app.ui.theme.FixedColors
 
 // 整页用近黑而不是纯黑：纯黑在 OLED 上与系统栏糊成一片，看不出页面边界喵。
-private val CROP_BACKGROUND = Color(0xFF111111)
+private val CROP_BACKGROUND = FixedColors.photoBackdrop
 
 // 遮罩只压暗取景框外侧，框内保持原图亮度，用户判断"留下哪一块"靠的就是框内那片像素喵。
-private val CROP_MASK = Color(0x99000000)
-private val CROP_FRAME = Color(0xF2FFFFFF)
-private val CROP_GRID = Color(0x4DFFFFFF)
+private val CROP_MASK = FixedColors.photoScrim
+private val CROP_FRAME = FixedColors.cropFrame
+private val CROP_GRID = FixedColors.cropGrid
 
 private const val MIN_SCALE = 1f
 private const val MAX_SCALE = 5f
