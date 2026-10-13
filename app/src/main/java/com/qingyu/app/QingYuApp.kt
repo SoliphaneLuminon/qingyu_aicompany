@@ -1,6 +1,7 @@
 package com.qingyu.app
 
 import android.app.Application
+import com.qingyu.app.proactive.ProactiveScheduler
 
 /**
  * 轻语 应用入口喵。
@@ -20,6 +21,10 @@ class QingYuApp : Application() {
         // 通知频道建早一点喵：真正要发通知时往往已经在后台，
         // 那时再建频道会多一次不必要的系统调用，也容易漏掉首次通知喵。
         container.replyNotifier.ensureChannels()
+        // 每次启动都按当前设置重排一次「角色主动找你」的闹钟喵。
+        // 放在这里而不是只放在设置页，是因为用户可能升级应用、或改了系统时间，
+        // 而闹钟是"排一次管很久"的东西，漏排一次就静默失效好几小时喵。
+        ProactiveScheduler(this).reschedule()
     }
 
     companion object {
