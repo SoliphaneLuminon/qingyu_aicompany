@@ -71,6 +71,21 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <!--
+          「让角色主动找你」的闹钟接收者喵。
+
+          exported="false" 是必须的：只有本应用自己排的闹钟该能触发它，
+          否则别的应用可以随便发这个广播、让角色凭空说话喵。
+        -->
+        <receiver
+            android:name=".proactive.ProactiveReceiver"
+            android:exported="false"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="com.qingyu.app.action.PROACTIVE" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>
