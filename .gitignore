@@ -20,3 +20,46 @@ keystore/
 # 签名密钥本体也绝不能进版本库：一旦推上公开仓库，任何人都能用它冒充你发版
 *.jks
 *.keystore
+
+# ---------------------------------------------------------------- IDE 与本地环境
+#
+# **整个 .idea 都不该进版本库**喵：它记的是「我这台机器怎么打开这个项目」，
+# 而不是「这个项目是什么」喵。
+#
+# 其中 deploymentTargetSelector.xml 尤其要紧——它里面写着**真机序列号**
+# （形如 serviceName=adb-XXXXXXXXXXXX-XXXX），而这是个公开仓库喵。
+# deviceManager.xml 同理，是本机调试过的设备表喵。
+#
+# 代价要说清喵：别人克隆后需要在 Android Studio 里重新 Sync 一次、
+# 重新选一次运行设备。这是**一次性**的手工成本，
+# 换来的是不把个人设备信息推到公开仓库——值得喵。
+.idea/
+*.iml
+*.hprof
+
+# 构建产物与缓存喵。
+.gradle/
+.kotlin/
+/build
+/app/build
+/captures
+.cxx
+.externalNativeBuild
+
+# 本机 SDK 路径喵。
+local.properties
+
+# 操作系统杂物喵。
+.DS_Store
+Thumbs.db
+desktop.ini
+*~
+*.swp
+
+# 我自己跑验证时留下的临时文件喵（tools/ 下的脚本是正式资产，不在其中）喵。
+_*.py
+_*.sqlite
+_*.xml
+_*.txt
+_*.png
+!tools/*.py
