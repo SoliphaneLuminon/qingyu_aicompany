@@ -40,6 +40,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.qingyu.app.data.Persona
 import com.qingyu.app.ui.components.PersonaAvatar
+import com.qingyu.app.ui.theme.FixedColors
+import com.qingyu.app.ui.theme.Radius
+import com.qingyu.app.ui.theme.Alpha
 
 /**
  * 实时语音通话页喵。
@@ -74,7 +77,7 @@ fun CallScreen(
         else -> "按住下方按钮说话"
     }
 
-    Surface(color = Color(0xFF14161C)) {
+    Surface(color = FixedColors.immersiveBackground) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -110,7 +113,7 @@ fun CallScreen(
             Text(
                 text = status,
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color.White.copy(alpha = 0.7f),
+                color = Color.White.copy(alpha = Alpha.muted),
             )
 
             // 用户刚说的话回显出来：语音识别偶尔会听错，
@@ -119,14 +122,14 @@ fun CallScreen(
                 Spacer(Modifier.height(24.dp))
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Color.White.copy(alpha = 0.08f))
+                        .clip(Radius.card)
+                        .background(Color.White.copy(alpha = Alpha.subtle))
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                 ) {
                     Text(
                         text = "你说：$lastUserText",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.85f),
+                        color = Color.White.copy(alpha = Alpha.muted),
                         textAlign = TextAlign.Center,
                     )
                 }
@@ -136,7 +139,7 @@ fun CallScreen(
 
             // 录音时显示一圈跳动的波纹，明确"正在听"喵。
             if (recording) {
-                Waveform(color = Color(0xFF7ED9A0))
+                Waveform(color = FixedColors.callAccent)
                 Spacer(Modifier.height(20.dp))
             }
 
@@ -149,7 +152,7 @@ fun CallScreen(
             Text(
                 text = "按住说话，松手发送",
                 style = MaterialTheme.typography.labelSmall,
-                color = Color.White.copy(alpha = 0.5f),
+                color = Color.White.copy(alpha = Alpha.secondary),
             )
 
             Spacer(Modifier.height(28.dp))
@@ -159,7 +162,7 @@ fun CallScreen(
                 modifier = Modifier
                     .size(64.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFFE0574A)),
+                    .background(FixedColors.packetRed),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
@@ -177,7 +180,7 @@ fun CallScreen(
             Text(
                 text = "挂断",
                 style = MaterialTheme.typography.labelMedium,
-                color = Color.White.copy(alpha = 0.6f),
+                color = Color.White.copy(alpha = Alpha.secondary),
             )
             Spacer(Modifier.height(36.dp))
         }
@@ -197,9 +200,9 @@ private fun HoldToTalkCallButton(
             .clip(CircleShape)
             .background(
                 if (recording) {
-                    Brush.linearGradient(listOf(Color(0xFF7ED9A0), Color(0xFF4FB477)))
+                    Brush.linearGradient(listOf(FixedColors.callAccent, FixedColors.callAccentDeep))
                 } else {
-                    Brush.linearGradient(listOf(Color(0xFF3A3F4B), Color(0xFF2A2E38)))
+                    Brush.linearGradient(listOf(FixedColors.callIdleStart, FixedColors.callIdleEnd))
                 },
             )
             .pointerInput(Unit) {
@@ -217,7 +220,7 @@ private fun HoldToTalkCallButton(
         Icon(
             imageVector = Icons.Outlined.Mic,
             contentDescription = "按住说话",
-            tint = if (recording) Color(0xFF10331F) else Color.White,
+            tint = if (recording) FixedColors.onCallAccent else Color.White,
             modifier = Modifier.size(40.dp),
         )
     }
@@ -248,7 +251,7 @@ private fun Waveform(color: Color) {
             Box(
                 modifier = Modifier
                     .size(width = 5.dp, height = height.value.dp)
-                    .clip(RoundedCornerShape(3.dp))
+                    .clip(Radius.badge)
                     .background(color),
             )
         }
