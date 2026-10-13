@@ -39,6 +39,37 @@ object StickerDirective {
     private val PUNCTUATION_ONLY = Regex("""^[\s，,。！？!?；;、：:.…~～—–·]+$""")
 
     /**
+     * 还没闭合的指令开头喵：`【表情包：笑` 这种。
+     *
+     * 用来从"正在打字"的那条气泡里把它藏掉喵。用户不该看到半个方括号——
+     * 那既不是话，也不是表情，纯粹是解析中的中间态喵。
+     */
+    private val OPEN_DIRECTIVE = Regex("""【\s*表情包[^】]*$""")
+
+    /**
+     * 找出**第一个已经闭合**的指令，返回它在文本里的下标区间喵。
+     *
+     * 给流式拆条用喵：模型写指令时通常只用一个换行
+     * （`说句话\n【表情包：笑】`），而空行拆分要等到流结束才收尾，
+     * 于是用户会先看到一行 `【表情包：笑】` 原文、过一会儿才变成图喵。
+     * 有了这个，指令一闭合就能立刻交出去喵。
+     *
+     * @return 闭合指令的下标区间；没有闭合的指令时返回 null喵
+     */
+    fun findComplete(text: String): IntRange? {
+        val match = PATTERN.find(text) ?: return null
+        return match.range
+    }
+
+    /**
+     * 把结尾处**还没闭合**的指令片段去掉喵（见 [OPEN_DIRECTIVE]）喵。
+     *
+     * 只处理结尾：闭合的指令会被正常解析，中间也不会出现半个方括号喵。
+     */
+    fun hideOpenDirective(text: String): String =
+        OPEN_DIRECTIVE.replace(text, "").trimEnd()
+
+    /**
      * 从一段回复里解析出正文与要发的表情喵。
      *
      * @param text 模型输出的一段文本喵
