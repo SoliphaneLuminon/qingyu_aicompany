@@ -4,11 +4,9 @@ import android.graphics.BitmapFactory
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -75,6 +73,7 @@ import com.qingyu.app.ui.components.PersonaAvatar
 import com.qingyu.app.ui.components.TypingDots
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.qingyu.app.ui.theme.Motion
 
 /** 思考过程折叠块。默认折叠，只显示"思考了 2.4 秒"喵。 */
 @Composable
@@ -140,22 +139,6 @@ fun ReasoningBlock(
 }
 
 /** 一条消息。点击气泡弹出操作菜单喵。 */
-/**
- * 消息入场用的动画规格：**临界阻尼、不回弹**喵。
- *
- * 原来用的是 `dampingRatio = 0.82`，那是欠阻尼——到位之后还会有一点过冲和抖动喵。
- * 要的是"平滑 + 阻尼感"，所以把阻尼比提到 1（临界阻尼）：
- * 只滑到位、绝不越位，收尾干净喵。
- * 刚度取 MediumLow，让整个过程铺开一点——快而不急，是"被轻轻放下"的手感喵。
- *
- * 故意不用 tween：tween 是匀速感，位移动画的结尾会显得"啪"地停住；
- * 临界阻尼弹簧的减速曲线才是那种有质感的收尾喵。
- */
-private val EnvelopeSpec = spring<Float>(
-    dampingRatio = 1f,
-    stiffness = Spring.StiffnessMediumLow,
-)
-
 @Composable
 fun MessageRow(
     message: ChatMessage,
@@ -195,7 +178,7 @@ fun MessageRow(
     // 既白掉一批帧，观感上也像"整段历史刚被重放了一遍"喵。
     val appear = remember(message.id) { Animatable(if (animateIn) 0f else 1f) }
     LaunchedEffect(message.id) {
-        if (animateIn) appear.animateTo(1f, EnvelopeSpec)
+        if (animateIn) appear.animateTo(1f, Motion.gentle)
     }
 
     // 用户在设置里关掉思考展示时，reasoning 消息整条不渲染喵。
