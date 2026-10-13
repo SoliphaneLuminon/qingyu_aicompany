@@ -4,7 +4,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.graphics.BitmapFactory
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
@@ -74,6 +73,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.util.TimeZone
 import com.qingyu.app.ui.theme.Motion
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.graphics.graphicsLayer
+import com.qingyu.app.ui.theme.Alpha
+import com.qingyu.app.ui.theme.Radius
 
 sealed interface TimelineItem {
     data class Day(val label: String) : TimelineItem
@@ -324,7 +327,7 @@ fun ChatScreen(
             },
             snackbarHost = {
                 SnackbarHost(snackbarHostState) { data ->
-                    Snackbar(snackbarData = data, shape = RoundedCornerShape(14.dp))
+                    Snackbar(snackbarData = data, shape = Radius.card)
                 }
             },
             bottomBar = {
@@ -405,13 +408,15 @@ fun ChatScreen(
                             // - 淡入也关掉：入场动画由 MessageRow 按"是不是刚到的消息"决定，
                             //   两套叠在一起会重复变淡，还白多一层开销喵。
                             // 位移用**临界阻尼**弹簧，与入场动画同一套手感（平滑、不回弹）喵。
+                            //
+                            // 这里原来把 `spring(dampingRatio = 1f, stiffness = MediumLow)`
+                            // **逐字抄了一遍**，而 Motion.placement 就是同一个值喵。
+                            // 抄一遍的代价是：以后调整手感时改了 Motion 却漏了这里，
+                            // 于是消息列表与其他动画的手感会悄悄不一致喵。
                             val itemModifier = Modifier.animateItem(
                                 fadeInSpec = null,
                                 fadeOutSpec = null,
-                                placementSpec = spring(
-                                    dampingRatio = 1f,
-                                    stiffness = Spring.StiffnessMediumLow,
-                                ),
+                                placementSpec = Motion.placement,
                             )
                             when (item) {
                                 is TimelineItem.Day -> DaySeparator(
@@ -529,7 +534,7 @@ private fun EmptyChatHint(persona: Persona?, modifier: Modifier = Modifier) {
         Text(
             text = "说点什么，开始这段对话",
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = Alpha.muted),
         )
     }
 }
@@ -627,7 +632,7 @@ private fun ChatInputBar(
                         .onFocusChanged { onInputFocusChanged(it.isFocused) },
                     placeholder = { Text("说点什么…") },
                     maxLines = 5,
-                    shape = RoundedCornerShape(22.dp),
+                    shape = Radius.large,
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                         unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -765,7 +770,7 @@ private fun HoldToTalkButton(
                 modifier = Modifier
                     .size(44.dp)
                     .clip(CircleShape)
-                    .border(1.5.dp, tint.copy(alpha = 0.55f), CircleShape),
+                    .border(1.5.dp, tint.copy(alpha = Alpha.secondary), CircleShape),
             )
         }
     }
@@ -869,14 +874,14 @@ private fun StickerCell(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
+            .clip(Radius.small)
             .clickable(onClick = onClick)
             .padding(4.dp),
     ) {
         Box(
             modifier = Modifier
                 .size(56.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .clip(Radius.chip)
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh),
             contentAlignment = Alignment.Center,
         ) {
@@ -984,14 +989,14 @@ private fun PlusAction(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(Radius.small)
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 6.dp),
     ) {
         Box(
             modifier = Modifier
                 .size(48.dp)
-                .clip(RoundedCornerShape(14.dp))
+                .clip(Radius.card)
                 .background(
                     if (highlight) {
                         MaterialTheme.colorScheme.primaryContainer
@@ -1038,7 +1043,7 @@ private fun PendingAttachmentsRow(
                     attachment = attachment,
                     modifier = Modifier
                         .size(64.dp)
-                        .clip(RoundedCornerShape(12.dp)),
+                        .clip(Radius.small),
                 )
                 Box(
                     modifier = Modifier
@@ -1046,7 +1051,7 @@ private fun PendingAttachmentsRow(
                         .padding(2.dp)
                         .size(18.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.65f))
+                        .background(MaterialTheme.colorScheme.scrim.copy(alpha = Alpha.secondary))
                         .clickable { onRemove(attachment) },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -1072,15 +1077,33 @@ private fun CircleActionButton(
     onClick: () -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    // **按下要缩一下**喵。这里原本建了 interactionSource 却从不收集它，
+    // 同时又写了 `indication = null` 把涟漪也关掉——
+    // 结果是发送按钮**点下去毫无反馈**喵。那是全应用最主要的动作，
+    // 按下去没回应会让人觉得"是不是没点上"喵。
+    //
+    // 用 0.92 而不是通用的 0.97喵：这是个 44dp 的小圆按钮，
+    // 缩放幅度按比例要更明显一点才察觉得到喵。
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && enabled) 0.92f else 1f,
+        animationSpec = Motion.snappy,
+        label = "circleActionScale",
+    )
     Box(
         modifier = Modifier
             .size(44.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .clip(CircleShape)
             .background(container)
-            .alpha(if (enabled) 1f else 0.85f)
+            .alpha(if (enabled) 1f else Alpha.disabled)
             .clickable(
                 enabled = enabled,
-                indication = null,
+                // 涟漪留着喵：小圆按钮上涟漪能明确"点到了"，
+                // 而缩放负责"按下去了"的物理感，两层叠起来才不木喵。
                 interactionSource = interaction,
                 onClick = onClick,
             ),
