@@ -1,7 +1,6 @@
 package com.qingyu.app.ui.home
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -61,6 +60,7 @@ import com.qingyu.app.ui.theme.QyChatRowNormalDark
 import com.qingyu.app.ui.theme.QyChatRowNormalLight
 import com.qingyu.app.ui.theme.QyChatRowPinnedDark
 import com.qingyu.app.ui.theme.QyChatRowPinnedLight
+import com.qingyu.app.ui.theme.Motion
 
 /**
  * 主界面：对话列表喵。
@@ -297,7 +297,7 @@ private fun ChatRow(
             pinned -> pinnedColor
             else -> normal
         },
-        animationSpec = tween(160),
+        animationSpec = Motion.color,
         label = "chatRowBg",
     )
     val persona = entry.persona
