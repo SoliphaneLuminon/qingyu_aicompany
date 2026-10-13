@@ -68,6 +68,9 @@ import com.qingyu.app.ui.components.HelpDot
 import com.qingyu.app.ui.components.LabelWithHelp
 import com.qingyu.app.ui.settings.HelpTexts
 import com.qingyu.app.ui.vm.MemoryViewModel
+import com.qingyu.app.ui.theme.Radius
+import com.qingyu.app.ui.theme.Alpha
+import com.qingyu.app.ui.components.pressableChip
 
 /** 长期记忆：这里写下的东西会被注入到对话里，并且会随时间慢慢淡忘喵。 */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -233,7 +236,7 @@ private fun MemoryHint(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp),
-        shape = RoundedCornerShape(18.dp),
+        shape = Radius.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
     ) {
         Row(
@@ -250,7 +253,7 @@ private fun MemoryHint(
                 Text(
                     text = "读一遍最近的对话，自动挑出值得长期记住的事。",
                     style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f),
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = Alpha.muted),
                 )
                 if (stats.total > 0) {
                     Spacer(Modifier.height(6.dp))
@@ -258,7 +261,7 @@ private fun MemoryHint(
                     Text(
                         text = "共 ${stats.total} 条 · 人设 ${stats.permanent} 条 · 平均鲜活度 $percent% · 累计想起 ${stats.totalRecalls} 次",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = Alpha.muted),
                     )
                 }
             }
@@ -295,12 +298,12 @@ private fun MemoryCard(
     val progress = item.vividness.coerceIn(0.0, 1.0).toFloat()
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = Radius.card,
         colors = CardDefaults.cardColors(
             containerColor = if (item.enabled) {
                 MaterialTheme.colorScheme.surfaceContainer
             } else {
-                MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.5f)
+                MaterialTheme.colorScheme.surfaceContainer.copy(alpha = Alpha.secondary)
             },
         ),
     ) {
@@ -420,7 +423,7 @@ private fun MemoryBadge(text: String, color: Color) {
         color = color,
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(color.copy(alpha = 0.12f))
+            .background(color.copy(alpha = Alpha.subtle))
         .padding(horizontal = 7.dp, vertical = 2.dp),
     )
 }
@@ -474,7 +477,7 @@ private fun MemoryEditorDialog(
                                         MaterialTheme.colorScheme.surfaceContainer
                                     },
                                 )
-                                .clickable { onCategory(entry) }
+                                .pressableChip { onCategory(entry) }
                                 .padding(horizontal = 10.dp, vertical = 5.dp),
                         )
                     }
