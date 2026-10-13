@@ -8,7 +8,6 @@ import androidx.lifecycle.viewModelScope
 import com.qingyu.app.AppContainer
 import com.qingyu.app.data.Attachment
 import com.qingyu.app.data.ChatMessage
-import com.qingyu.app.data.Conversation
 import com.qingyu.app.data.MessageKind
 import com.qingyu.app.data.MessageRole
 import com.qingyu.app.data.Persona
@@ -28,7 +27,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -224,9 +222,33 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         typingQueue.clear()
         viewModelScope.launch {
             _state.update { it.copy(loading = true) }
-            container.settings.update { it.copy(lastPersonaId = persona.id) }
-            val conversation = engine.openConversation(persona.id)
-            val messages = engine.history(conversation.id)
+
+            // **进入对话要做的库操作全部挪到 IO 线程**喵。
+            //
+            // 用户报的是「进入角色聊天框时卡顿」喵。这条协程跑在
+            // viewModelScope 的默认调度器（Main）上，而下面几件事都是**同步 IO**：
+            // `settings.update` 会落盘 SharedPreferences、`openConversation` 可能
+            // 建会话并写开场白、`history` 要读整段消息与附件、`clearUnread`
+            // 与 `totalUnread` 各是一次写库加一次全表聚合喵。
+            // 它们加起来就是进对话那一下的掉帧喵。
+            //
+            // 把它们整块放进 withContext(Dispatchers.IO) 之后，
+            // 主线程只负责最后那一次 _state.update（也就是真正要画的那一帧）喵。
+            val loaded = withContext(Dispatchers.IO) {
+                container.settings.update { it.copy(lastPersonaId = persona.id) }
+                val conversation = engine.openConversation(persona.id)
+                val messages = engine.history(conversation.id)
+                // 进来就算看过了喵：**先**告诉流水线"用户正看着这段"，**再**清零喵。
+                // 顺序不能反——反了的话清零会与流水线的记账撞在一起，
+                // 刚好此刻落地的回复会被记成未读，而界面明明已经在看它了喵。
+                coordinator.openConversationId = conversation.id
+                engine.clearUnread(conversation.id)
+                // 桌面角标挂在通知上，未读归零时要把那条常驻通知撤掉喵。
+                val unreadTotal = engine.totalUnread()
+                Triple(conversation, messages, unreadTotal)
+            }
+            val (conversation, messages, unreadTotal) = loaded
+
             _state.update {
                 it.copy(
                     loading = false,
@@ -244,13 +266,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     needsSetup = container.settings.current.apiKey.isBlank(),
                 )
             }
-            // 进来就算看过了喵：**先**告诉流水线"用户正看着这段"，**再**清零喵。
-            // 顺序不能反——反了的话清零会与流水线的记账撞在一起，
-            // 刚好此刻落地的回复会被记成未读，而界面明明已经在看它了喵。
-            coordinator.openConversationId = conversation.id
-            engine.clearUnread(conversation.id)
-            // 桌面角标挂在通知上，未读归零时要把那条常驻通知撤掉喵。
-            container.replyNotifier.showUnreadSummary(engine.totalUnread())
+            container.replyNotifier.showUnreadSummary(unreadTotal)
             // 开场白可能是刚写进去的，回列表时预览要能立刻反映出来喵。
             refreshPersonas()
         }
