@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.qingyu.app.ui.theme.Motion
+import com.qingyu.app.ui.theme.Alpha
 
 /**
  * 一个设置项的说明：用法 / 调整影响 / 建议参数喵。
@@ -103,7 +104,7 @@ private fun HelpDotButton(
             .size(size)
             .scale(scale)
             .clip(CircleShape)
-            .border(1.dp, scheme.onSurfaceVariant.copy(alpha = 0.55f), CircleShape)
+            .border(1.dp, scheme.onSurfaceVariant.copy(alpha = Alpha.secondary), CircleShape)
             .clickable(interactionSource = interaction, indication = null) { open = true },
         contentAlignment = Alignment.Center,
     ) {
