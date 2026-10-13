@@ -58,6 +58,8 @@ import com.qingyu.app.ui.components.EmptyState
 import com.qingyu.app.ui.components.PersonaAvatar
 import kotlinx.coroutines.launch
 import com.qingyu.app.ui.theme.Motion
+import com.qingyu.app.ui.theme.Radius
+import com.qingyu.app.ui.theme.Alpha
 
 /**
  * 通讯录：管理所有角色喵。
@@ -143,7 +145,7 @@ fun ContactsScreen(
                     HorizontalDivider(
                         modifier = Modifier.padding(start = 68.dp),
                         thickness = 0.6.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = Alpha.disabled),
                     )
                 }
                 groups.forEach { (letter, members) ->
@@ -161,7 +163,7 @@ fun ContactsScreen(
                         HorizontalDivider(
                             modifier = Modifier.padding(start = 68.dp),
                             thickness = 0.6.dp,
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = Alpha.disabled),
                         )
                     }
                 }
@@ -213,8 +215,8 @@ private fun IndexBubble(letter: String?, modifier: Modifier = Modifier) {
         Box(
             modifier = Modifier
                 .size(72.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f)),
+                .clip(Radius.card)
+                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = Alpha.muted)),
             contentAlignment = Alignment.Center,
         ) {
             Text(
@@ -240,7 +242,7 @@ private fun AddContactRow(onClick: () -> Unit) {
         Box(
             modifier = Modifier
                 .size(40.dp)
-                .clip(RoundedCornerShape(10.dp))
+                .clip(Radius.small)
                 .background(MaterialTheme.colorScheme.primaryContainer),
             contentAlignment = Alignment.Center,
         ) {
