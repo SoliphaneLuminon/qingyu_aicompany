@@ -616,7 +616,9 @@ class ChatEngine(
                         // [dropLast(1)] 在空行拆分时会把刚入列的定型气泡扔回去喵，
                         // 而旧 tail 留在了列表里——导致同一段文字同时以 id=-1 和 id>0喵
                         // 两条出现，UI 先闪完整段再逐条曝光喵。
-                        val tail = accumulator.currentTail
+                        // 用 displayTail 而不是 currentTail喵：它会把**还没闭合**的
+                        // 表情包指令藏掉，用户不会看到 `【表情包：` 这种半截方括号喵。
+                        val tail = accumulator.displayTail
                         val optimistic = state.bubbles.filter { it.id > 0 } + ChatStreamState.Bubble(
                             id = -1L,
                             text = tail,
