@@ -52,6 +52,7 @@ import com.qingyu.app.data.Sticker
 import com.qingyu.app.ui.components.EmptyState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.qingyu.app.ui.theme.Radius
 
 /**
  * 表情管理页喵。
@@ -216,7 +217,7 @@ private fun StickerCard(
     }
     Column(
         modifier = Modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(Radius.small)
             .background(MaterialTheme.colorScheme.surfaceContainerLow)
             .padding(8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -225,7 +226,7 @@ private fun StickerCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(84.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .clip(Radius.chip)
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh),
             contentAlignment = Alignment.Center,
         ) {
@@ -255,7 +256,7 @@ private fun StickerCard(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
+                    .clip(Radius.chip)
                     .clickable(onClick = onRename)
                     .padding(horizontal = 8.dp, vertical = 3.dp),
             )
@@ -266,7 +267,7 @@ private fun StickerCard(
                 tint = MaterialTheme.colorScheme.error,
                 modifier = Modifier
                     .size(18.dp)
-                    .clip(RoundedCornerShape(6.dp))
+                    .clip(Radius.chip)
                     .clickable(onClick = onDelete),
             )
         }
