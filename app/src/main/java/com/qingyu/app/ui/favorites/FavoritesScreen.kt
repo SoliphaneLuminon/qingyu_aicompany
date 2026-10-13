@@ -62,6 +62,7 @@ import com.qingyu.app.data.FavoriteKind
 import com.qingyu.app.ui.components.EmptyState
 import com.qingyu.app.ui.components.TagChip
 import com.qingyu.app.ui.vm.FavoritesViewModel
+import com.qingyu.app.ui.theme.Radius
 
 /**
  * 收藏空间喵。
@@ -127,7 +128,7 @@ fun FavoritesScreen(
                     }
                 },
                 singleLine = true,
-                shape = RoundedCornerShape(16.dp),
+                shape = Radius.card,
             )
 
             LazyRow(
@@ -219,7 +220,7 @@ private fun FavoriteCard(
     val copyText = com.qingyu.app.ui.components.rememberCopyText()
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = Radius.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
@@ -229,7 +230,7 @@ private fun FavoriteCard(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
+                        .clip(Radius.chip)
                         .background(MaterialTheme.colorScheme.primaryContainer)
                         .padding(horizontal = 6.dp, vertical = 2.dp),
                 )
