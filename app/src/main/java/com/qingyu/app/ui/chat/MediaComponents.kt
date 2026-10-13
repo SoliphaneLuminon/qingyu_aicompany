@@ -41,6 +41,10 @@ import com.qingyu.app.data.SearchHit
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.qingyu.app.ui.theme.FixedColors
+import com.qingyu.app.ui.theme.Radius
+import com.qingyu.app.ui.theme.Alpha
+import com.qingyu.app.ui.components.pressableImage
 
 /**
  * 在**后台线程**解码一张本地图；还没解好时返回 null，调用方先画占位喵。
@@ -122,8 +126,8 @@ fun MessageImages(
                     attachment = attachment,
                     modifier = Modifier
                         .size(120.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable { onOpen(attachment) },
+                        .clip(Radius.small)
+                        .pressableImage { onOpen(attachment) },
                 )
             }
         }
@@ -131,7 +135,7 @@ fun MessageImages(
             Box(
                 modifier = Modifier
                     .size(48.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(Radius.small)
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh),
                 contentAlignment = Alignment.Center,
             ) {
@@ -151,7 +155,7 @@ fun ImageViewerDialog(attachment: Attachment, onDismiss: () -> Unit) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.92f))
+                .background(FixedColors.photoBackdrop)
                 .clickable(onClick = onDismiss),
             contentAlignment = Alignment.Center,
         ) {
@@ -179,10 +183,10 @@ fun ImageViewerDialog(attachment: Attachment, onDismiss: () -> Unit) {
                     Text(
                         text = attachment.description,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.85f),
+                        color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = Alpha.muted),
                         modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.85f))
+                            .clip(Radius.small)
+                            .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = Alpha.muted))
                             .padding(12.dp),
                     )
                 }
@@ -219,7 +223,7 @@ fun SearchSources(
     Column(
         modifier = modifier
             .widthIn(max = 300.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(Radius.small)
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .clickable { expanded.value = !expanded.value }
             .padding(horizontal = 10.dp, vertical = 6.dp),
@@ -245,7 +249,7 @@ fun SearchSources(
                 Text(
                     text = hit.url,
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = Alpha.muted),
                     maxLines = 1,
                 )
             }
