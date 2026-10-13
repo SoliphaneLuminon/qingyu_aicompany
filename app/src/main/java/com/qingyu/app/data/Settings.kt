@@ -156,6 +156,23 @@ fun AppSettings.refineConfig(): UtilityLlmConfig = utilityConfig(promptRefineEna
 fun AppSettings.extractConfig(): UtilityLlmConfig = utilityConfig(autoMemoryExtraction)
 
 /**
+ * 记忆精排一路的配置喵。
+ *
+ * **默认走主模型**喵：用户的要求是"先用主模型判定，但预留小模型接口"喵。
+ * [utilityConfig] 里的 provider 默认就是 [UtilityProvider.MAIN]，
+ * 它会解析到主模型的地址/模型/Key（见 [UtilityLlmRouter.resolve]）——
+ * 所以这里不需要额外的"用主模型"开关喵。
+ *
+ * 以后要换成真正的后台小模型，用户在设置里把服务商切走即可，
+ * 调用方一行都不用改喵。
+ *
+ * 它复用 [AppSettings.memoryRerankerEnabled] 作为总开关喵——
+ * 这个字段以前是个**死开关**（只被存进设置、没有任何地方消费），
+ * 现在终于有了真正的执行者喵。
+ */
+fun AppSettings.rerankConfig(): UtilityLlmConfig = utilityConfig(memoryRerankerEnabled)
+
+/**
  * 合成时实际该用的语音模型喵。
  *
  * 选中的如果是从外部导入的音色，就用它自带的模型——音色是绑在模型上的喵，
