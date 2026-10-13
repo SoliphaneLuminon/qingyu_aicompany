@@ -39,6 +39,9 @@ import android.graphics.BitmapFactory
 import com.qingyu.app.AppContainer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.qingyu.app.ui.theme.FixedColors
+import com.qingyu.app.ui.theme.Radius
+import com.qingyu.app.ui.theme.Alpha
 
 /**
  * 角色头像喵。
@@ -83,7 +86,7 @@ fun PersonaAvatar(
             .size(size)
             .clip(CircleShape)
             .background(background)
-            .border(1.dp, scheme.outlineVariant.copy(alpha = 0.4f), CircleShape),
+            .border(1.dp, scheme.outlineVariant.copy(alpha = Alpha.disabled), CircleShape),
         contentAlignment = Alignment.Center,
     ) {
         val image = bitmap
@@ -158,7 +161,7 @@ fun EmptyState(
 }
 
 /** 微信那种红喵。定成常量而不是就地写字面量，免得几处各写一个略微不同的红喵。 */
-private val UnreadRed = Color(0xFFFA5151)
+private val UnreadRed = FixedColors.unreadBadge
 
 /**
  * 红点里要显示的文案喵；返回 null 表示**不该画**这个徽标喵。
@@ -258,7 +261,7 @@ fun AccentBar(
         modifier = modifier
             .width(width)
             .height(height)
-            .clip(RoundedCornerShape(2.dp))
+            .clip(Radius.badge)
             .background(color),
     )
 }
