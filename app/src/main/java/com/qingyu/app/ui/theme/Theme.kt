@@ -43,6 +43,15 @@ private val LightColors = lightColorScheme(
     onSurfaceVariant = QyOnSurfaceVariant,
     surfaceContainer = QySurfaceContainer,
     surfaceContainerHigh = QySurfaceContainerHigh,
+    // 下面这几个槽**必须显式给**喵。不给的话 Material 会退回它自己的基线值
+    // （带紫调的 #F7F2FA 之类），于是白灰的微信界面上会浮出一层淡紫喵。
+    surfaceContainerLow = QySurfaceContainerLow,
+    surfaceContainerHighest = QySurfaceContainerHigh,
+    inverseOnSurface = QyInverseOnSurface,
+    inverseSurface = QyInverseSurface,
+    scrim = QyScrim,
+    errorContainer = QyErrorContainer,
+    onErrorContainer = QyOnErrorContainer,
     outline = QyOutline,
     outlineVariant = QyOutlineVariant,
     error = QyError,
@@ -68,6 +77,17 @@ private val DarkColors = darkColorScheme(
     onSurfaceVariant = QyOnSurfaceVariantDark,
     surfaceContainer = QySurfaceContainerDark,
     surfaceContainerHigh = QySurfaceContainerHighDark,
+    surfaceContainerLow = QySurfaceContainerLowDark,
+    surfaceContainerHighest = QySurfaceContainerHighDark,
+    // **这一条修的是一个真 bug**喵：暗色下图片查看器把文字与图标画在
+    // 近乎纯黑的底上，用的正是 inverseOnSurface喵。不显式给的话它是
+    // 基线的深灰（约 #313033）——深灰压近黑，等于**看不见**喵。
+    // 所以这里明确给成浅色喵。
+    inverseOnSurface = QyInverseOnSurfaceDark,
+    inverseSurface = QyInverseSurfaceDark,
+    scrim = QyScrim,
+    errorContainer = QyErrorContainerDark,
+    onErrorContainer = QyOnErrorContainerDark,
     outline = QyOutlineDark,
     outlineVariant = QyOutlineDark,
     error = ColorTokens.errorDark,
