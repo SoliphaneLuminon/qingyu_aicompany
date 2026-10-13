@@ -13,6 +13,8 @@ import com.qingyu.app.data.CustomVoiceParser
 import com.qingyu.app.data.DEFAULT_SPEECH_VOICE
 import com.qingyu.app.data.TtsProvider
 import com.qingyu.app.data.effectiveSpeechModel
+import com.qingyu.app.data.repo.ReplyRequest
+import com.qingyu.app.proactive.ProactiveScheduler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -111,8 +113,61 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         _state.update { it.copy(appVersion = version) }
     }
 
+    /**
+     * 所有设置改动的**唯一入口**喵。
+     *
+     * 主动消息的开关与间隔也走这里，所以闹钟的重排挂在它上面——
+     * 挂在具体那个开关的回调里的话，以后再加一个入口（比如通知里直接关掉）
+     * 就会漏掉重排，而症状是"关了开关它还在主动说话"，很难查喵。
+     */
     fun update(transform: (AppSettings) -> AppSettings) {
+        val before = container.settings.current
         container.settings.update(transform)
+        val after = container.settings.current
+        if (before.proactiveMessages != after.proactiveMessages ||
+            before.proactiveIntervalMinutes != after.proactiveIntervalMinutes
+        ) {
+            ProactiveScheduler(getApplication()).reschedule()
+        }
+    }
+
+    /**
+     * 立刻让角色主动说一句喵（设置页的"立刻试一次"按钮）。
+     *
+     * 存在的理由见那个按钮的注释喵：这个功能的正常间隔以小时计，
+     * 没有它，用户开完开关只能干等，无法区分"没到点"和"坏了"喵。
+     *
+     * 它**刻意绕过"应用在前台就不打扰"那条判断**喵：用户刚点完按钮，
+     * 当然就在前台；照那条规则走会什么都不发生，按钮就变成了假的喵。
+     */
+    fun triggerProactiveNow() {
+        val app = getApplication<Application>()
+        val container = AppContainer.get(app)
+        viewModelScope.launch {
+            val conversations = runCatching { container.database.conversations.list() }
+                .getOrDefault(emptyList())
+            val target = conversations.filter { !it.hidden }.maxByOrNull { it.updatedAt }
+            if (target == null) {
+                _state.update { it.copy(toast = "还没有聊过的角色，先随便聊一句再来试") }
+                return@launch
+            }
+            val persona = runCatching { container.database.personas.get(target.personaId) }
+                .getOrNull()
+            if (persona == null) {
+                _state.update { it.copy(toast = "这段对话的角色不见了") }
+                return@launch
+            }
+            container.replyCoordinator.submitProactive(
+                ReplyRequest(
+                    conversationId = target.id,
+                    personaId = persona.id,
+                    personaName = persona.name,
+                    searchRequested = false,
+                    immediate = true,
+                ),
+            )
+            _state.update { it.copy(toast = "已让「${persona.name}」主动开口，回聊天页看看") }
+        }
     }
 
     fun testConnection() {
