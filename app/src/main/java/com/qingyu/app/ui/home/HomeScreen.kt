@@ -4,6 +4,8 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -61,6 +63,7 @@ import com.qingyu.app.ui.theme.QyChatRowNormalLight
 import com.qingyu.app.ui.theme.QyChatRowPinnedDark
 import com.qingyu.app.ui.theme.QyChatRowPinnedLight
 import com.qingyu.app.ui.theme.Motion
+import com.qingyu.app.ui.theme.Alpha
 
 /**
  * 主界面：对话列表喵。
@@ -173,7 +176,16 @@ fun HomeScreen(
                     //
                     // 里面必须再套一个 Column 来叠行与分隔线——Box 是**层叠**布局，
                     // 直接把两样放进 Box 会让分隔线画在行的上面而不是下面喵。
-                    Box(modifier = Modifier.animateItem()) {
+                    // 显式给 placementSpec喵：裸的 animateItem() 会用 Compose 的默认弹簧，
+                    // 那与聊天页列表的位移手感**不一样**（默认是欠阻尼，会轻微回弹）喵。
+                    // 两个列表页的让位动画必须同一套，否则切来切去会觉得"哪里不对劲"喵。
+                    Box(
+                        modifier = Modifier.animateItem(
+                            fadeInSpec = null,
+                            fadeOutSpec = null,
+                            placementSpec = Motion.placement,
+                        ),
+                    ) {
                         Column {
                             ChatRow(
                                 entry = entry,
@@ -183,7 +195,7 @@ fun HomeScreen(
                             HorizontalDivider(
                                 modifier = Modifier.padding(start = 76.dp),
                                 thickness = 0.6.dp,
-                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = Alpha.disabled),
                             )
                         }
                         if (menuFor?.persona?.id == entry.persona.id) {
@@ -290,7 +302,15 @@ private fun ChatRow(
     val normal = if (isDark) QyChatRowNormalDark else QyChatRowNormalLight
     val pinnedColor = if (isDark) QyChatRowPinnedDark else QyChatRowPinnedLight
 
-    var pressed by remember { mutableStateOf(false) }
+    // **按下底色必须真的接上 interaction source**喵。
+    // 原来这里写的是 `var pressed by remember { mutableStateOf(false) }`，
+    // 而它**从来没有被赋过 true**——于是下面那个 `pressed ->` 分支
+    // 是永远走不到的死代码，会话行按下去只有一层涟漪、没有底色变化喵。
+    //
+    // 这种"看起来实现了、实际永不执行"的写法比完全没写更糟喵：
+    // 读代码的人会以为这里已经有按压反馈，于是不会再去加喵。
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
     val background by animateColorAsState(
         targetValue = when {
             pressed -> MaterialTheme.colorScheme.surfaceContainerHigh
@@ -308,6 +328,10 @@ private fun ChatRow(
             .fillMaxWidth()
             .background(background)
             .combinedClickable(
+                // 涟漪关掉喵：整行已经有底色变化了，再叠一层涟漪
+                // 在大块区域上会显得"糊"，而且底色变化本身更贴合列表行的语义喵。
+                interactionSource = interaction,
+                indication = null,
                 onClick = onClick,
                 onLongClick = onLongClick,
                 onLongClickLabel = "更多操作",
