@@ -37,6 +37,8 @@ import com.qingyu.app.ui.components.LabelWithHelp
 import com.qingyu.app.ui.components.PersonaAvatar
 import com.qingyu.app.ui.settings.HelpTexts
 import com.qingyu.app.ui.theme.Motion
+import com.qingyu.app.ui.theme.Radius
+import com.qingyu.app.ui.components.pressableChip
 
 /**
  * 可选头像 emoji 喵。
@@ -94,7 +96,7 @@ fun PersonaEditorDialog(
                     Box(
                         modifier = Modifier
                             .scale(avatarBump.value)
-                            .clip(RoundedCornerShape(14.dp))
+                            .clip(Radius.card)
                             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                             .padding(horizontal = 8.dp, vertical = 8.dp),
                     ) {
@@ -148,9 +150,9 @@ fun PersonaEditorDialog(
                                 Box(
                                     modifier = Modifier
                                         .scale(emojiScale)
-                                        .clip(RoundedCornerShape(10.dp))
+                                        .clip(Radius.small)
                                         .background(bg)
-                                        .clickable { onChange { it.copy(avatarEmoji = emoji) } }
+                                        .pressableChip { onChange { it.copy(avatarEmoji = emoji) } }
                                         .padding(horizontal = 8.dp, vertical = 5.dp),
                                 ) {
                                     Text(text = emoji)
