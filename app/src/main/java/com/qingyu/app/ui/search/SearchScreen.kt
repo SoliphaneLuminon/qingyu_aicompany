@@ -50,6 +50,7 @@ import com.qingyu.app.data.ChatMessage
 import com.qingyu.app.data.MessageRole
 import com.qingyu.app.ui.components.EmptyState
 import kotlinx.coroutines.launch
+import com.qingyu.app.ui.theme.Radius
 
 /** 聊天记录搜索：跨会话找一句话喵。 */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -105,7 +106,7 @@ fun SearchScreen(
                 placeholder = { Text("输入关键词，比如某个名字或一件事") },
                 leadingIcon = { Icon(Icons.Outlined.Search, null) },
                 singleLine = true,
-                shape = RoundedCornerShape(16.dp),
+                shape = Radius.card,
             )
 
             when {
@@ -138,7 +139,7 @@ fun SearchScreen(
                     items(results, key = { it.id }) { message ->
                         Card(
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(16.dp),
+                            shape = Radius.card,
                             colors = CardDefaults.cardColors(
                                 containerColor = if (message.conversationId == conversationId) {
                                     MaterialTheme.colorScheme.primaryContainer
@@ -154,7 +155,7 @@ fun SearchScreen(
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier
-                                            .clip(RoundedCornerShape(6.dp))
+                                            .clip(Radius.chip)
                                             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                                             .padding(horizontal = 6.dp, vertical = 2.dp),
                                     )
