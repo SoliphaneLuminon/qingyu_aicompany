@@ -37,11 +37,23 @@ val QingYuTypography = Typography(
     labelSmall = style(11f, 15f, FontWeight.Medium, 0.2f),
 )
 
-/** 偏圆润的形状，符合"陪伴"类应用的气质喵。 */
+/**
+ * 偏圆润的形状，符合"陪伴"类应用的气质喵。
+ *
+ * **它从 [Radius] 派生，不自己写数值**喵。改之前这里是独立的五个数
+ * （8/12/18/24/32），而 [Radius] 是另一套（4/8/12/16/20/28）——
+ * 于是"卡片圆角"在代码里同时存在 16dp 与 18dp 两种，
+ * 组件用 `MaterialTheme.shapes.medium` 还是 `Radius.card` 会得到**不同**的结果喵。
+ *
+ * 那种"两套真源"的问题不会立刻显形，但会慢慢让界面显得不齐——
+ * 而它极难排查，因为每一处单看都"差不多合理"喵。
+ *
+ * 现在只有一处真源：要调整体圆角，改 [Radius] 即可喵。
+ */
 val QingYuShapes = Shapes(
-    extraSmall = RoundedCornerShape(8.dp),
-    small = RoundedCornerShape(12.dp),
-    medium = RoundedCornerShape(18.dp),
-    large = RoundedCornerShape(24.dp),
-    extraLarge = RoundedCornerShape(32.dp),
+    extraSmall = Radius.badge,
+    small = Radius.chip,
+    medium = Radius.card,
+    large = Radius.large,
+    extraLarge = Radius.sheet,
 )
