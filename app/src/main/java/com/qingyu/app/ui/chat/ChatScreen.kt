@@ -72,7 +72,8 @@ import com.qingyu.app.ui.vm.ChatViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import java.util.Calendar
+import java.util.TimeZone
+import com.qingyu.app.ui.theme.Motion
 
 sealed interface TimelineItem {
     data class Day(val label: String) : TimelineItem
@@ -215,10 +216,23 @@ fun ChatScreen(
     // 而流式期间时间线每个 token 都在重建，于是这个 effect 每个 token 重启一次、
     // 每次都把上一次的滚动动画打断重来：屏幕一直在被拽，帧也就一直掉喵。
     // 现在键换成**最后一条的稳定 key**（字符串），内容增长不会重启它喵。
+    //
+    // **进入对话时不用动画滚**喵：刚进来时列表还没排过版（`visibleItemsInfo` 是空的），
+    // 原来的代码会走 `animateScrollToItem` 从**顶部**一路动画滚到最后一条——
+    // 一段 300 条的对话就是滚过 300 项，`dumpsys gfxinfo` 里的
+    // `Slow issue draw commands` 正是这么来的喵。
+    // 进对话该"直接就位"，而不是让用户看着它从最早的消息滚下来喵。
+    var landed by remember(state.conversation?.id) { mutableStateOf(false) }
     val lastItemKey = timeline.lastOrNull()?.let(::timelineKey)
-    LaunchedEffect(timeline.size, lastItemKey) {
+    LaunchedEffect(timeline.size, lastItemKey, landed) {
         if (timeline.isEmpty()) return@LaunchedEffect
-        // 用户自己往上翻看历史时**绝不硬拽回去**喵：那是最恼人的手感。
+        if (!landed) {
+            // 第一次定位：**瞬时跳**到底部，一帧到位、不做动画喵。
+            runCatching { listState.scrollToItem(timeline.lastIndex) }
+            landed = true
+            return@LaunchedEffect
+        }
+        // 之后才是"新消息来了"：用户自己往上翻看历史时**绝不硬拽回去**喵，
         // 只在本来就在底部附近（最后两条可见）时才跟随喵。
         val info = listState.layoutInfo
         val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: return@LaunchedEffect
@@ -707,7 +721,7 @@ private fun HoldToTalkButton(
 ) {
     val scale by animateFloatAsState(
         targetValue = if (recording) 1.12f else 1f,
-        animationSpec = spring(dampingRatio = 0.5f, stiffness = 900f),
+        animationSpec = Motion.snappy,
         label = "holdTalkScale",
     )
     val tint = if (recording) {
@@ -1089,16 +1103,23 @@ private fun buildHistoryItems(
 ): List<TimelineItem> {
     val items = ArrayList<TimelineItem>(messages.size + 4)
     var lastRole: MessageRole? = null
-    var lastDay: String? = null
+    // **`now` 只取一次**喵：原来每条消息都调 TimeUtil.now()，
+    // 一天之内虽然结果一样，但那是一次系统调用乘以消息条数喵。
+    val now = TimeUtil.now()
+    var lastDayKey = Long.MIN_VALUE
+    var lastDayLabel: String? = null
 
     messages.forEach { message ->
         // 关掉"显示思考过程"时整条不画，也就**不该占一天的分隔**喵。
         if (!showReasoning && message.role == MessageRole.REASONING) return@forEach
 
-        val day = dayLabel(message.timestamp)
-        if (day != lastDay) {
-            items.add(TimelineItem.Day(day))
-            lastDay = day
+        val key = dayKey(message.timestamp, now)
+        if (key != lastDayKey) {
+            // 分隔标签只在跨天时才需要算（那天大概率是"今天"或"昨天"，
+            // 连 TimeUtil.smart 都不会走到）喵。
+            lastDayLabel = dayLabel(key, now)
+            lastDayKey = key
+            items.add(TimelineItem.Day(lastDayLabel))
             lastRole = null
         }
         val showAvatar = message.role != MessageRole.REASONING && lastRole != message.role
@@ -1165,18 +1186,29 @@ private fun timelineKey(item: TimelineItem): String = when (item) {
     is TimelineItem.Reason -> "reason-streaming"
 }
 
-private fun dayLabel(timestamp: Long): String {
-    val now = TimeUtil.now()
-    return when {
-        sameDay(timestamp, now) -> "今天"
-        sameDay(timestamp, now - 86_400_000L) -> "昨天"
-        else -> TimeUtil.smart(timestamp).substringBefore(' ')
-    }
+/**
+ * 算出这条消息该归到哪一天，返回一个**可直接比较**的日期键喵。
+ *
+ * 原来这里对每条消息都调 `sameDay`（各建两个 `Calendar`）、再退回
+ * `TimeUtil.smart`（内部还要建 `SimpleDateFormat`）喵。
+ * 一段 300 条的对话就是**上千次对象分配加格式化**，而且全在主线程的组合阶段——
+ * 这正是 `dumpsys gfxinfo` 里 `Slow UI thread` 的来源喵。
+ *
+ * 现在改成：`Calendar` 只建一次（`now` 那一刻），每条消息只做几次整数除法喵。
+ * 键直接用于比较，所以"同一天"的判定也从对象比较变成了整数比较喵。
+ */
+private fun dayKey(timestamp: Long, now: Long): Long {
+    // 用"距 epoch 的天数"当键：本地时区的偏移量按同一条消息的时间算，
+    // 这样跨时区、跨夏令时都不会把两天并成一天喵。
+    val offset = TimeZone.getDefault().getOffset(timestamp)
+    return (timestamp + offset) / 86_400_000L
 }
 
-private fun sameDay(a: Long, b: Long): Boolean {
-    val ca = Calendar.getInstance().apply { timeInMillis = a }
-    val cb = Calendar.getInstance().apply { timeInMillis = b }
-    return ca.get(Calendar.YEAR) == cb.get(Calendar.YEAR) &&
-            ca.get(Calendar.DAY_OF_YEAR) == cb.get(Calendar.DAY_OF_YEAR)
+private fun dayLabel(key: Long, now: Long): String {
+    val todayKey = dayKey(now, now)
+    return when (key) {
+        todayKey -> "今天"
+        todayKey - 1 -> "昨天"
+        else -> TimeUtil.smart(key * 86_400_000L).substringBefore(' ')
+    }
 }
