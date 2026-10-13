@@ -3,6 +3,7 @@ package com.qingyu.app.data.repo
 import com.qingyu.app.core.memory.RecallDecision
 import com.qingyu.app.core.memory.RefineReason
 import com.qingyu.app.core.memory.RefineSource
+import com.qingyu.app.core.memory.RerankOutcome
 import com.qingyu.app.data.MemoryItem
 import com.qingyu.app.remote.ChatTurn
 
@@ -37,6 +38,17 @@ data class ContextSnapshot(
     val refineReason: RefineReason = RefineReason.DISABLED,
     /** 留档时刻，界面上用来标明"这是哪一轮"喵。 */
     val at: Long = 0L,
+    /**
+     * 本轮精排的结论喵。
+     *
+     * 用户报过「记忆注入太严苛，几乎没有记忆可以注入」喵。
+     * 而"记忆是空的"有好几种完全不同的原因：没有相关候选、
+     * 精排开关没开、精排超时、模型全判无关喵。
+     * 不把这几种在自检页上分开，调参就只能靠猜喵。
+     */
+    val rerankOutcome: RerankOutcome = RerankOutcome.DISABLED,
+    /** 靠模型判定**越过骰子**被救回来的条数喵。 */
+    val rescuedCount: Int = 0,
 ) {
     /** 挂了图片的消息条数。图片本体是 base64，界面只报数量，不把它铺出来喵。 */
     val imageTurnCount: Int get() = turns.count { it.hasImages }
