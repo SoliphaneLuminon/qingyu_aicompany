@@ -47,6 +47,7 @@ import com.qingyu.app.core.TimeUtil
 import com.qingyu.app.data.Conversation
 import com.qingyu.app.data.Persona
 import com.qingyu.app.ui.components.PersonaAvatar
+import com.qingyu.app.ui.theme.Alpha
 
 /**
  * 聊天信息页喵。
@@ -237,7 +238,7 @@ private fun InfoRow(
         HorizontalDivider(
             modifier = Modifier.padding(start = 56.dp),
             thickness = 0.6.dp,
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = Alpha.disabled),
         )
     }
 }
