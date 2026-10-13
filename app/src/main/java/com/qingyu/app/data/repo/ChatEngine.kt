@@ -544,6 +544,10 @@ class ChatEngine(
                     refineSource = refineOutcome.source,
                     refineReason = refineOutcome.reason,
                     at = TimeUtil.now(),
+                    // 精排结论也要留档喵：自检页据此回答"记忆为什么是空的"，
+                    // 而这与"没有相关候选"是完全不同的两件事喵。
+                    rerankOutcome = memoryContext.rerankOutcome,
+                    rescuedCount = memoryContext.rescuedCount,
                 ),
             ),
         )
