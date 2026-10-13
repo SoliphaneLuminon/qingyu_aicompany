@@ -7,8 +7,6 @@ import androidx.core.content.ContextCompat
 import android.os.Build
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutLinearInEasing
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -83,6 +81,7 @@ import com.qingyu.app.ui.vm.DataViewModel
 import com.qingyu.app.ui.vm.PersonasViewModel
 import com.qingyu.app.ui.vm.ShellViewModel
 import com.qingyu.app.ui.vm.decideBackAction
+import com.qingyu.app.ui.theme.Motion
 
 /**
  * 底部标签喵。
@@ -137,10 +136,9 @@ private fun rememberSystemBottomInset(): Dp =
 private fun ScreenEnter(content: @Composable () -> Unit) {
     val progress = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
-        progress.animateTo(
-            targetValue = 1f,
-            animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing),
-        )
+        // 页面进入用**临界阻尼**喵：原来是一条 240ms 的 tween，
+        // 匀速滑到位、结尾"啪"地停住；弹簧的减速收尾才是"被轻轻放下"的手感喵。
+        progress.animateTo(targetValue = 1f, animationSpec = Motion.gentle)
     }
     Box(
         modifier = Modifier
@@ -303,15 +301,12 @@ fun QingYuAppRoot(
     LaunchedEffect(inChat) {
         if (inChat) {
             chatMounted = true
-            chatProgress.animateTo(
-                targetValue = 1f,
-                animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
-            )
+            // 进对话的推入用**临界阻尼**喵：原来进是 300ms tween、出是 260ms tween，
+            // 两个方向时长还不一样，进出感觉不对称喵。
+            // 现在进出同一套弹簧，来回都稳喵。
+            chatProgress.animateTo(targetValue = 1f, animationSpec = Motion.gentle)
         } else {
-            chatProgress.animateTo(
-                targetValue = 0f,
-                animationSpec = tween(durationMillis = 260, easing = FastOutLinearInEasing),
-            )
+            chatProgress.animateTo(targetValue = 0f, animationSpec = Motion.gentle)
             // 动画收尾再卸掉，并丢掉快照，免得下次打开先闪一下上一个人的消息喵。
             chatMounted = false
             lastChatState.value = null
@@ -668,7 +663,7 @@ fun QingYuAppRoot(
                 // 横向位移反而会让人以为可以左右滑，淡入更符合"换了一屏"的直觉喵。
                 Crossfade(
                     targetState = tab,
-                    animationSpec = tween(durationMillis = 220),
+                    animationSpec = Motion.fade,
                     label = "homeTab",
                 ) { current ->
                     when (current) {
