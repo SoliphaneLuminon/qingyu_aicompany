@@ -3,8 +3,6 @@ package com.qingyu.app.ui.personas
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -38,6 +36,7 @@ import com.qingyu.app.data.Persona
 import com.qingyu.app.ui.components.LabelWithHelp
 import com.qingyu.app.ui.components.PersonaAvatar
 import com.qingyu.app.ui.settings.HelpTexts
+import com.qingyu.app.ui.theme.Motion
 
 /**
  * 可选头像 emoji 喵。
@@ -90,7 +89,7 @@ fun PersonaEditorDialog(
                     val avatarBump = remember { Animatable(1f) }
                     LaunchedEffect(draft.avatarEmoji, draft.avatarImage) {
                         avatarBump.snapTo(1.15f)
-                        avatarBump.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 600f))
+                        avatarBump.animateTo(1f, Motion.snappy)
                     }
                     Box(
                         modifier = Modifier
@@ -138,12 +137,12 @@ fun PersonaEditorDialog(
                                     } else {
                                         MaterialTheme.colorScheme.surfaceContainer
                                     },
-                                    animationSpec = tween(160),
+                                    animationSpec = Motion.color,
                                     label = "emojiBg",
                                 )
                                 val emojiScale by animateFloatAsState(
                                     targetValue = if (selected) 1.12f else 1f,
-                                    animationSpec = spring(dampingRatio = 0.6f, stiffness = 800f),
+                                    animationSpec = Motion.snappy,
                                     label = "emojiScale",
                                 )
                                 Box(
