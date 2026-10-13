@@ -54,7 +54,25 @@ class AppContainer(context: Context) {
     val audioRecorder: AudioRecorder by lazy { AudioRecorder(appContext) }
     val transcription: TranscriptionClient by lazy { TranscriptionClient() }
     val utilityLlm: UtilityLlmClient by lazy { UtilityLlmClient(chatClient) }
-    val memoryDirector: MemoryDirector by lazy { MemoryDirector(database) }
+
+    /**
+     * 记忆检索与精排的编排喵。
+     *
+     * 后三个 lambda 是**延迟读取**的，不是多此一举喵：
+     * `memoryDirector` 在 `chatEngine` 之前构建，而主模型的地址/模型/Key
+     * 要等用户设置就绪才知道。用 lambda 而不是直接取值，
+     * 是为了让"此刻读到什么"发生在**每次精排时**，而不是构建容器的那一刻——
+     * 否则用户在设置页改了接口，精排还会一直用旧地址喵。
+     */
+    val memoryDirector: MemoryDirector by lazy {
+        MemoryDirector(
+            db = database,
+            rerankerLlm = utilityLlm,
+            mainEndpoint = { settings.chatEndpoint },
+            mainModel = { settings.current.model },
+            mainApiKey = { settings.current.apiKey },
+        )
+    }
     val memoryExtraction: MemoryExtractionService by lazy { MemoryExtractionService(database, utilityLlm) }
 
     /** 一次性整理记忆库（聚类 + AI 融合），只在用户手动触发时跑喵。 */
