@@ -21,8 +21,8 @@ android {
         applicationId = "com.qingyu.app"
         minSdk = 26
         targetSdk = 37
-        versionCode = 15
-        versionName = "1.2.6"
+        versionCode = 16
+        versionName = "1.2.7"
     }
 
     androidResources {
