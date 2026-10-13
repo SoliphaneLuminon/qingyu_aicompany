@@ -74,6 +74,11 @@ import com.qingyu.app.ui.components.TypingDots
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.qingyu.app.ui.theme.Motion
+import com.qingyu.app.ui.theme.FixedColors
+import com.qingyu.app.ui.theme.Duration
+import com.qingyu.app.ui.theme.Radius
+import com.qingyu.app.ui.theme.Alpha
+import com.qingyu.app.ui.components.pressableImage
 
 /** 思考过程折叠块。默认折叠，只显示"思考了 2.4 秒"喵。 */
 @Composable
@@ -93,7 +98,7 @@ fun ReasoningBlock(
     Column(
         modifier = modifier
             .widthIn(max = 300.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .clip(Radius.card)
             .background(scheme.surfaceContainer)
             .clickable(enabled = text.isNotBlank()) { expanded = !expanded }
             .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -131,7 +136,7 @@ fun ReasoningBlock(
                 text = text.trim().takeLast(60),
                 style = MaterialTheme.typography.bodySmall,
                 fontStyle = FontStyle.Italic,
-                color = scheme.onSurfaceVariant.copy(alpha = 0.75f),
+                color = scheme.onSurfaceVariant.copy(alpha = Alpha.muted),
                 maxLines = 2,
             )
         }
@@ -164,7 +169,7 @@ fun MessageRow(
     } else {
         if (isDark) QyPetBubbleDark else QyPetBubble
     }
-    val bubbleTextColor = if (isUser && !isDark) Color(0xFF111111) else Color.White
+    val bubbleTextColor = if (isUser && !isDark) FixedColors.onUserBubbleLight else Color.White
     var menuOpen by remember { mutableStateOf(false) }
     val copyText = com.qingyu.app.ui.components.rememberCopyText()
 
@@ -291,7 +296,10 @@ fun MessageRow(
                                     .clip(shape)
                                     .background(bubbleColor)
                                     .clickable { menuOpen = true }
-                                    .animateContentSize()
+                                    // **必须显式给规格**喵：裸的 animateContentSize() 用
+                                    // Compose 默认弹簧（欠阻尼），气泡在长出新内容时会
+                                    // 轻微过冲一下再回弹；用临界阻尼则只"长到位"、不抖喵。
+                                    .animateContentSize(animationSpec = Motion.size)
                                     .padding(horizontal = 14.dp, vertical = 10.dp),
                             ) {
                                 if (message.content.isNotBlank()) {
@@ -334,7 +342,7 @@ fun MessageRow(
                     Text(
                         text = TimeUtil.clock(message.timestamp),
                         style = MaterialTheme.typography.labelSmall,
-                        color = scheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        color = scheme.onSurfaceVariant.copy(alpha = Alpha.muted),
                     )
                 }
 
@@ -447,8 +455,8 @@ private fun StickerBubble(
     Box(
         modifier = Modifier
             .size(120.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .clickable { onOpen(attachment) },
+            .clip(Radius.small)
+            .pressableImage { onOpen(attachment) },
         contentAlignment = Alignment.Center,
     ) {
         val image = bitmap
@@ -472,7 +480,7 @@ fun DaySeparator(text: String, modifier: Modifier = Modifier) {
         Text(
             text = text,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = Alpha.muted),
             modifier = Modifier
                 .clip(RoundedCornerShape(50))
                 .background(MaterialTheme.colorScheme.surfaceContainer)
@@ -488,7 +496,9 @@ fun BreathingHint(text: String, modifier: Modifier = Modifier) {
     val alpha by transition.animateFloat(
         initialValue = 0.35f,
         targetValue = 0.9f,
-        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+        // 呼吸的周期走令牌，不再就地写 900 这个魔法数喵：
+        // 通话页的头像呼吸是同一个周期，两处各写一遍就容易改不齐喵。
+        animationSpec = infiniteRepeatable(tween(Duration.breath), RepeatMode.Reverse),
         label = "alpha",
     )
     Text(
