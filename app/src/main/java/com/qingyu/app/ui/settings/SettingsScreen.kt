@@ -890,6 +890,16 @@ fun SettingsScreen(
                     onChange = { value -> viewModel.update { it.copy(proactiveIntervalMinutes = value.toInt()) } },
                     help = HelpTexts.proactiveInterval,
                 )
+                // **必须有个"立刻试一次"**喵：这个功能的间隔最短 15 分钟，
+                // 用户开了开关之后要等很久才知道它到底通不通，
+                // 而这期间他完全无法区分"没到点"和"坏了"喵。
+                // 有这个按钮，验证就变成一秒的事喵。
+                TextButton(
+                    onClick = { viewModel.triggerProactiveNow() },
+                    enabled = settings.proactiveMessages,
+                ) {
+                    Text("立刻试一次")
+                }
                     }
             }
 
