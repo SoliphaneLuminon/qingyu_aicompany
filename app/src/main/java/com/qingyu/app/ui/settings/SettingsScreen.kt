@@ -94,6 +94,10 @@ import com.qingyu.app.ui.vm.ModelSlot
 import com.qingyu.app.ui.vm.SettingsViewModel
 import android.provider.Settings as AndroidSettings
 import com.qingyu.app.ui.theme.Motion
+import com.qingyu.app.ui.theme.Radius
+import com.qingyu.app.ui.theme.Alpha
+import com.qingyu.app.ui.components.pressable
+import com.qingyu.app.ui.components.pressableChip
 
 /** Android 11 起不再需要这个权限，低版本必须检查喵。 */
 private fun canDrawOverlays(context: android.content.Context): Boolean =
@@ -972,7 +976,7 @@ private fun SettingsCard(content: @Composable () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 6.dp),
-        shape = RoundedCornerShape(18.dp),
+        shape = Radius.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
     ) {
         Column(
@@ -1006,7 +1010,7 @@ private fun CollapsibleSettingsSection(
     )
     // 展开时标题行底色略深，收起时透明：让"哪一段是打开的"一眼可辨喵。
     val headerTint by animateColorAsState(
-        targetValue = if (expanded) scheme.primary.copy(alpha = 0.06f) else Color.Transparent,
+        targetValue = if (expanded) scheme.primary.copy(alpha = Alpha.faint) else Color.Transparent,
         animationSpec = Motion.color,
         label = "sectionHeaderTint",
     )
@@ -1015,9 +1019,9 @@ private fun CollapsibleSettingsSection(
             .fillMaxWidth()
             .padding(horizontal = 12.dp)
             .padding(top = 10.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(Radius.small)
             .background(headerTint)
-            .clickable { expanded = !expanded }
+            .pressable { expanded = !expanded }
             .padding(start = 10.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1157,7 +1161,7 @@ private fun CustomVoiceRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(Radius.small)
             .background(if (selected) scheme.primaryContainer else scheme.surfaceContainerHigh)
             .clickable(onClick = onSelect)
             .padding(start = 14.dp, end = 2.dp, top = 8.dp, bottom = 8.dp),
@@ -1299,7 +1303,7 @@ private fun ModelSuggestions(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = 168.dp)
-            .clip(RoundedCornerShape(10.dp)),
+            .clip(Radius.small),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         items(models, key = { it }) { model ->
@@ -1307,7 +1311,7 @@ private fun ModelSuggestions(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(Radius.chip)
                     .background(
                         if (isSelected) {
                             MaterialTheme.colorScheme.primaryContainer
@@ -1315,7 +1319,7 @@ private fun ModelSuggestions(
                             MaterialTheme.colorScheme.surfaceContainerHigh
                         },
                     )
-                    .clickable { onPick(model) }
+                    .pressableChip { onPick(model) }
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
