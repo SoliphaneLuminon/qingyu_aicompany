@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import com.qingyu.app.AppContainer
 import com.qingyu.app.core.TimeUtil
 import com.qingyu.app.core.memory.RecallDecision
+import com.qingyu.app.core.memory.RerankOutcome
 import com.qingyu.app.data.AppSettings
 import com.qingyu.app.data.MemoryItem
 import com.qingyu.app.data.MessageRole
@@ -242,6 +243,13 @@ fun DebugScreen(state: ChatUiState, onBack: () -> Unit, modifier: Modifier = Mod
                             "唤醒判定（共 ${decisions.size} 条参与，实际注入 ${injectedMemories.size} 条）",
                         )
                     }
+                    // **精排结论必须显式写出来**喵：用户报过"几乎没有记忆可以注入"，
+                    // 而"记忆是空的"有好几种完全不同的原因——没有相关候选、
+                    // 精排开关没开、精排超时、模型全判无关喵。
+                    // 不把这几种分开，调参就只能靠猜喵。
+                    item {
+                        Block(text = rerankLine(shown), dim = shown?.rerankOutcome != RerankOutcome.OK)
+                    }
                     items(decisions, key = { "dec-${it.memory.id}" }) { decision ->
                         Block(
                             text = decisionLine(decision),
@@ -251,6 +259,26 @@ fun DebugScreen(state: ChatUiState, onBack: () -> Unit, modifier: Modifier = Mod
                 }
             }
         }
+    }
+}
+
+/**
+ * 精排那一行喵。
+ *
+ * 它回答的是"这轮为什么没有记忆"里**最容易被忽略**的一种原因喵：
+ * 候选其实找到了，是精排把它们筛掉了、或者精排自己挂了喵。
+ */
+private fun rerankLine(snapshot: ContextSnapshot?): String {
+    val outcome = snapshot?.rerankOutcome ?: RerankOutcome.DISABLED
+    val rescued = snapshot?.rescuedCount ?: 0
+    val base = "精排：${outcome.label}"
+    return when {
+        rescued > 0 -> "$base · 其中 $rescued 条是靠模型救回来的"
+        outcome == RerankOutcome.UNUSABLE -> "$base（模型把候选全判成无关，已退回统计结果）"
+        outcome == RerankOutcome.TIMEOUT -> "$base（模型没在时限内返回，已退回统计结果）"
+        outcome == RerankOutcome.NO_CONFIG -> "$base（缺地址或 Key，检查设置里的小模型服务商）"
+        outcome == RerankOutcome.DISABLED -> "$base（在设置里打开「Reranker 精排」才会走这一步）"
+        else -> base
     }
 }
 
