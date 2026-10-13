@@ -1,0 +1,40 @@
+# 行尾统一喵。
+#
+# 为什么需要这个文件喵：仓库里原本没有 .gitattributes，而本机
+# core.autocrlf = true——于是每次提交都会刷一堆
+# 「LF will be replaced by CRLF」警告，而且同一个文件在不同机器上
+# 可能落成不同的行尾，diff 里就会冒出整文件的假改动喵。
+#
+# 规则喵：文本文件在仓库里一律存 LF，检出时由 Git 按平台决定；
+# 二进制文件禁止任何转换（否则会损坏内容）喵。
+* text=auto eol=lf
+
+# 二进制：绝不转换喵。
+*.jar   binary
+*.jks   binary
+*.keystore binary
+*.zip   binary
+*.apk   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.webp  binary
+*.ttf   binary
+*.otf   binary
+
+# Windows 脚本保留 CRLF，否则在 cmd 里可能出问题喵。
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# 这些文件按语言标记，GitHub 上能正确统计与高亮喵。
+*.kt    text
+*.kts   text
+*.md    text
+*.xml   text
+*.json  text
+*.js    text
+*.py    text
+*.toml  text
+
+# 生成物不该出现在 diff 里喵。
+/gradle/wrapper/gradle-wrapper.jar linguist-generated=true
