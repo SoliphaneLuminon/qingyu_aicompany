@@ -33,11 +33,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.qingyu.app.data.RedPacket
+import com.qingyu.app.ui.theme.FixedColors
+import com.qingyu.app.ui.theme.Radius
+import com.qingyu.app.ui.theme.Alpha
 
 /** 红包的经典红金配色喵。 */
-private val PacketRed = Color(0xFFE0574A)
-private val PacketRedDeep = Color(0xFFC0392B)
-private val PacketGold = Color(0xFFF5C46B)
+private val PacketRed = FixedColors.packetRed
+private val PacketRedDeep = FixedColors.packetRedDeep
+private val PacketGold = FixedColors.packetGold
 
 /** 几个常用金额，点一下就不用键盘了喵。 */
 private val QUICK_AMOUNTS = listOf(5.20, 8.88, 13.14, 52.0, 66.66, 99.99)
@@ -69,7 +72,7 @@ fun RedPacketDialog(
                 Box(
                     modifier = Modifier
                         .size(28.dp)
-                        .clip(RoundedCornerShape(6.dp))
+                        .clip(Radius.chip)
                         .background(Brush.verticalGradient(listOf(PacketRed, PacketRedDeep))),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -171,7 +174,7 @@ fun RedPacketBubble(
 ) {
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
+            .clip(Radius.small)
             .background(Brush.verticalGradient(listOf(PacketRed, PacketRedDeep)))
             .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -197,7 +200,7 @@ fun RedPacketBubble(
         Spacer(Modifier.height(6.dp))
         Text(
             text = wish.ifBlank { "恭喜发财，大吉大利" },
-            color = PacketGold.copy(alpha = 0.9f),
+            color = PacketGold.copy(alpha = Alpha.onMedia),
             style = MaterialTheme.typography.labelMedium,
         )
     }
