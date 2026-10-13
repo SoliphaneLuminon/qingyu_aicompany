@@ -43,6 +43,7 @@ import com.qingyu.app.data.Persona
 import com.qingyu.app.data.repo.ContextSnapshot
 import com.qingyu.app.remote.PromptBuilder
 import com.qingyu.app.ui.vm.ChatUiState
+import com.qingyu.app.ui.theme.Radius
 
 /**
  * 上下文自检页喵。
@@ -131,7 +132,7 @@ fun DebugScreen(state: ChatUiState, onBack: () -> Unit, modifier: Modifier = Mod
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
-                shape = RoundedCornerShape(16.dp),
+                shape = Radius.card,
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
@@ -347,7 +348,7 @@ private fun Block(text: String, dim: Boolean = false) {
         },
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(Radius.small)
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .padding(12.dp),
     )
