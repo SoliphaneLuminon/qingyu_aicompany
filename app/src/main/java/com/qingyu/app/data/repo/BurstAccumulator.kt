@@ -24,6 +24,15 @@ class BurstAccumulator(
     /** 当前正在增长的尾巴，供 UI 做乐观渲染喵。 */
     val currentTail: String get() = buffer.trim()
 
+    /**
+     * 给界面看的尾巴：**把还没闭合的表情包指令藏掉**喵。
+     *
+     * 模型是流式吐字的，写到 `【表情包：笑】` 的中途必然出现
+     * `【表情包：` 这种半截形态喵。那是解析中的中间态，既不是话也不是表情，
+     * 让用户看到半个方括号纯属噪音喵。
+     */
+    val displayTail: String get() = StickerDirective.hideOpenDirective(currentTail)
+
     suspend fun feed(chunk: String) {
         // 协议层已保证 JSON null 不会变成文本；这里再清一次喵，
         // 防止兼容型网关把字段值写成字符串 "null" 时漏进数据库喵。
@@ -38,10 +47,41 @@ class BurstAccumulator(
             return
         }
 
-        val segments = full.split(Regex("\n\\s*\n+"))
+        // **表情包指令一闭合就立刻交出去**喵，不等空行、也不等流结束喵。
+        //
+        // 用户报的现象是「角色回复时先挂一条表情包名称的文字消息，
+        // 最后生成完才显示图像」喵。根因就是：模型写指令通常只用一个换行
+        // （`说句话\n【表情包：笑】`），而空行拆分要等 `finish()` 才收尾，
+        // 于是那一行 `【表情包：笑】` 会先以**原文**上屏，过一会儿才变成图喵。
+        //
+        // 这里在指令闭合的那一刻就把前半段和指令一起交出去，
+        // 用户看到的就是「文字一条、表情一条」按顺序逐条出现喵。
+        val directiveRange = StickerDirective.findComplete(full)
+        if (directiveRange != null) {
+            val head = full.substring(0, directiveRange.first)
+            val directive = full.substring(directiveRange.first, directiveRange.last + 1)
+            if (head.isNotBlank()) emitSegment(head)
+            // 指令整条交给 emitSegment：那里的括号保护会让它**不被切断**喵。
+            emitSegment(directive)
+        }
+
+        // 待处理的整段：有闭合指令时是它后面那一截，否则就是 `full` 本身喵。
+        // **不能读 `buffer`**：它还是这一轮之前的值，新到的 chunk 会整个丢掉喵。
+        val pending = if (directiveRange != null) {
+            full.substring(directiveRange.last + 1).trimStart()
+        } else {
+            full
+        }
+
+        if (pending.isBlank()) {
+            buffer = ""
+            return
+        }
+
+        val segments = pending.split(Regex("\n\\s*\n+"))
         if (segments.size <= 1) {
             // 还没有出现空行边界：整段都是尾巴喵。
-            buffer = if (full.endsWith("\n")) full.trimEnd() + "\n" else full
+            buffer = if (pending.endsWith("\n")) pending.trimEnd() + "\n" else pending
             return
         }
 
