@@ -1,7 +1,6 @@
 package com.qingyu.app.ui.components
 
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -30,11 +29,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.qingyu.app.ui.theme.Motion
 
 /**
  * 一个设置项的说明：用法 / 调整影响 / 建议参数喵。
@@ -95,7 +94,7 @@ private fun HelpDotButton(
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(
         targetValue = if (pressed) 0.86f else 1f,
-        animationSpec = spring(dampingRatio = 0.55f, stiffness = 900f),
+        animationSpec = Motion.snappy,
         label = "helpDotScale",
     )
 
