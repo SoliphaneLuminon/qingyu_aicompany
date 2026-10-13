@@ -198,6 +198,26 @@ class ChatReplyCoordinator(
     }
 
     /**
+     * 让角色**主动开话**喵（定时任务用，见 [com.qingyu.app.proactive.ProactiveScheduler]）。
+     *
+     * 走 [submitNow] 那条路（立即跑、不合并窗口）喵：它是定时触发的，
+     * 没有"用户正在连发消息"要等；而且它必须**立刻**占用流水线，
+     * 否则用户恰好在这一刻发消息时，主动消息会插到他的对话前面喵。
+     *
+     * 与普通回复的区别只在 [runOne] 里选哪个引擎入口——那边会补一句开话由头喵。
+     */
+    fun submitProactive(request: ReplyRequest) {
+        activeRequest = request
+        ensureServiceRunning(request)
+        pipelineJob = scope.launch {
+            pipelineLock.withLock {
+                runOne(request, proactive = true)
+            }
+            onPipelineIdle()
+        }
+    }
+
+    /**
      * 把已封口的批次依次跑掉喵。
      *
      * **每次都起一条流水线**，靠 [pipelineLock] 串行化，而不是"看有没有活着的流水线"喵。
@@ -228,18 +248,25 @@ class ChatReplyCoordinator(
      *
      * 本函数不自己起协程：它就是流水线里的一步，由 [drain] 的循环串起来喵。
      */
-    private suspend fun runOne(request: ReplyRequest) {
+    private suspend fun runOne(request: ReplyRequest, proactive: Boolean = false) {
         replyBuffer.clear()
         _generatingFor.value = request.conversationId
-        val source: Flow<ChatEvent> = if (request.regenerateFrom != null) {
-            engine.regenerate(
+        val source: Flow<ChatEvent> = when {
+            request.regenerateFrom != null -> engine.regenerate(
                 conversationId = request.conversationId,
                 personaId = request.personaId,
                 fromMessageId = request.regenerateFrom,
                 searchRequested = request.searchRequested,
             )
-        } else {
-            engine.generate(
+
+            // 主动开话走它自己的入口：那条路会补一句"该你开口了"的舞台提示喵。
+            proactive -> engine.generateProactive(
+                conversationId = request.conversationId,
+                personaId = request.personaId,
+                searchRequested = request.searchRequested,
+            )
+
+            else -> engine.generate(
                 conversationId = request.conversationId,
                 personaId = request.personaId,
                 searchRequested = request.searchRequested,
