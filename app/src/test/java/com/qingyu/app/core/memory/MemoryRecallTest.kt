@@ -174,4 +174,113 @@ class MemoryRecallTest {
         )
         assertTrue(decisions.single().recalled)
     }
+
+    // ---------------------------------------------------------------- 相关性门槛
+
+    /**
+     * 这一组钉的是用户报的那个症状喵：「要么不注入，要么注入的与用户输入无关」。
+     *
+     * 下面的配置刻意把所有**干扰项**都关掉喵：概率唤醒关掉、冷却关掉、衰减关掉。
+     * 这样能被筛掉的只剩「相关性」这一个因素——
+     * 于是测试失败时，原因必然是相关性判定本身，而不是运气喵。
+     */
+    private fun relevanceConfig() = RecallConfig(
+        limit = 6,
+        probabilityEnabled = false,
+        cooldownTurns = 0,
+        decayEnabled = false,
+    )
+
+    @Test
+    fun `与输入零词面重叠的记忆不该被注入`() {
+        // 「今天加班到很晚好累」与「用户喜欢喝美式咖啡」在二元组上**毫无交集**喵。
+        // 但后者重要度满分、鲜活度满分、情绪满分——综合排序会把它排到最前喵。
+        // 若相似度不是门槛、只参与排序，它就会挤进来：
+        // 这正是「注入的记忆与用户输入无关」喵。
+        val irrelevant = memory(
+            id = 2L,
+            content = "用户喜欢喝美式咖啡",
+            importance = 10,
+            vividness = 1.0,
+            emotionalWeight = 1.0,
+        )
+        val decisions = MemoryRecall.evaluate(
+            memories = listOf(irrelevant),
+            query = "今天加班到很晚好累",
+            currentTurn = 3,
+            config = relevanceConfig(),
+        )
+        val recalled = MemoryRecall.recalled(decisions)
+        assertTrue(
+            "零相似度的记忆不该被注入，实际注入了：${recalled.map { it.content }}",
+            recalled.isEmpty(),
+        )
+    }
+
+    @Test
+    fun `无关记忆不该挤掉相关的记忆`() {
+        val relevant = memory(
+            id = 1L,
+            content = "用户今天加班很累",
+            importance = 3,
+            emotionalWeight = 0.5,
+        )
+        val irrelevant = memory(
+            id = 2L,
+            content = "用户喜欢喝美式咖啡",
+            importance = 10,
+            vividness = 1.0,
+            emotionalWeight = 1.0,
+        )
+        val decisions = MemoryRecall.evaluate(
+            memories = listOf(irrelevant, relevant),
+            query = "今天加班到很晚好累",
+            currentTurn = 3,
+            config = relevanceConfig(),
+        )
+        val recalled = MemoryRecall.recalled(decisions)
+        assertEquals(
+            "只该注入相关的那一条，实际：${recalled.map { it.content }}",
+            listOf(1L),
+            recalled.map { it.id },
+        )
+    }
+
+    @Test
+    fun `相似度略低于门槛的记忆被标成不相关并可解释`() {
+        // 「有理由地没想起来」和「莫名其妙没想起来」在调试页上必须能区分喵。
+        val weak = memory(id = 1L, content = "用户喜欢喝咖啡")
+        val decisions = MemoryRecall.evaluate(
+            memories = listOf(weak),
+            query = "今天加班到很晚好累",
+            currentTurn = 3,
+            config = relevanceConfig(),
+        )
+        val d = decisions.single()
+        assertFalse("不该被唤醒", d.recalled)
+        assertEquals(
+            "该标明是因为不相关，而不是概率没中",
+            RecallSkipReason.IRRELEVANT,
+            d.reason,
+        )
+    }
+
+    @Test
+    fun `关闭相关性门槛后恢复原来的行为`() {
+        // 调试与对照实验需要能关掉这一层喵：
+        // 关掉之后即使零相似度也照常走概率/冷却那套判定喵。
+        val irrelevant = memory(
+            id = 2L,
+            content = "用户喜欢喝美式咖啡",
+            importance = 10,
+            emotionalWeight = 1.0,
+        )
+        val decisions = MemoryRecall.evaluate(
+            memories = listOf(irrelevant),
+            query = "今天加班到很晚好累",
+            currentTurn = 3,
+            config = relevanceConfig().copy(minRelevance = 0.0),
+        )
+        assertTrue("门槛关掉之后该放行", MemoryRecall.recalled(decisions).isNotEmpty())
+    }
 }
