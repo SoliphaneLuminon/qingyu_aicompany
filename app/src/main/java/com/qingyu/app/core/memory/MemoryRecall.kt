@@ -10,6 +10,16 @@ enum class RecallSkipReason(val label: String) {
     /** 冷却中：近 20 轮内刚被唤醒过喵。 */
     COOLING_DOWN("冷却中"),
 
+    /**
+     * 与当前输入不相关：相似度低于门槛喵。
+     *
+     * 这一条必须**独立于** [LOST_ROLL]** 喵：两者在调试页上含义完全不同——
+     * 一个是「这条记忆跟你刚说的话没关系，本来就不该提」，
+     * 另一个是「有关系，只是这次掷骰子没中，下次可能就想起来了」喵。
+     * 混在一起会让人以为记忆系统在乱来喵。
+     */
+    IRRELEVANT("与当前话题无关"),
+
     /** 概率没中。正常情况，不是错误喵。 */
     LOST_ROLL("概率未中"),
 }
@@ -48,9 +58,43 @@ data class RecallConfig(
     val probabilityEnabled: Boolean = true,
     /** 最低重要度门槛：低于此值的记忆不进入候选池。0 = 不过滤喵。 */
     val minImportance: Int = 0,
+
+    /**
+     * **最低相关度门槛**：与当前输入的余弦相似度低于它就不注入喵。0 = 不过滤喵。
+     *
+     * 这是修「注入的记忆与用户输入无关」的那个开关喵。
+     *
+     * 为什么它必须是**门槛**而不是排序权重喵：改之前相似度只占综合得分的
+     * 0.30 权重，而重要度占 0.25、鲜活度 0.20、情绪 0.15、间隔 0.10喵。
+     * 于是一条**零词面重叠**但重要度满分、情绪满分的记忆能拿到
+     * `0.25 + 0.20 + 0.15 + 0.10 = 0.70` 分，
+     * 而一条语义完全对口、但重要度低、刚写入的记忆可能只有 0.5 分出头喵。
+     * 排序权重再怎么调也拦不住它——**只有门槛能拦**喵。
+     *
+     * 取值刻意偏低（见 [DEFAULT_MIN_RELEVANCE]）：这一层只负责挡住
+     * 「压根没关系」的那一类，不该去做「精挑细选」——
+     * 真正的语义判断交给可选的 Reranker喵。
+     */
+    val minRelevance: Double = DEFAULT_MIN_RELEVANCE,
+
     /** 是否启用小模型 Reranker 对唤醒候选做交叉比对喵。 */
     val rerankerEnabled: Boolean = false,
-)
+) {
+    companion object {
+        /**
+         * 默认相关度门槛喵。
+         *
+         * 定这个数之前先算了一下实际量级喵：查询与记忆都按
+         * 「中文二元组」建 L2 归一化的稀疏向量，于是共享**一个**二元组
+         * 大致给出 0.13~0.15 的相似度，共享两个约 0.28喵。
+         *
+         * 所以 0.08 的含义很明确喵：**连一个词都没有真正共享的直接出局**；
+         * 只要有一个实打实的共同词（例如「加班」）就放过去，
+         * 走原来的概率与冷却判定喵。这正是「温和地挡住无关」而不误伤喵。
+         */
+        const val DEFAULT_MIN_RELEVANCE = 0.08
+    }
+}
 
 /**
  * 记忆检索的三段管道喵：
@@ -183,6 +227,12 @@ object MemoryRecall {
 
         val hardBlock = when {
             config.decayEnabled && item.vividness < config.vividnessFloor -> RecallSkipReason.FADING
+            // **相关性门槛**喵：这是「注入的记忆与用户输入无关」的正面修复喵。
+            //
+            // 顺序放在淡忘之后、冷却之前，是有意的喵：淡忘是「这条快忘了」，
+            // 更贴近数据本身的状态；而「无关」比「刚提过」更能解释
+            // 用户此刻的疑问——他不是在问为什么没重复提，是在问为什么提了不相干的事喵。
+            config.minRelevance > 0.0 && similarity < config.minRelevance -> RecallSkipReason.IRRELEVANT
             MemoryDecay.coolingDown(
                 currentTurn = currentTurn,
                 lastRecalledTurn = item.lastRecalledTurn,
