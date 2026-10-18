@@ -105,13 +105,25 @@ object MemoryReranker {
         if (!config.enabled) return RerankResult(decisions, RerankOutcome.DISABLED)
         if (llm == null) return RerankResult(decisions, RerankOutcome.NO_CONFIG)
 
+        // **送进模型之前按「相似度」重排** 喵。
+        //
+        // 传进来的 `decisions` 是按综合得分排的，而综合分里重要度(0.25)与
+        // 鲜活度(0.20)加起来比相似度(0.30)还重——于是一条分数很高、
+        // 但跟当前话题毫无关系的记忆会占据前排，把这 12 个名额挤满，
+        // 真正相关的那条反而没被送给模型看喵。
+        //
+        // 那样会让精排看起来"从不救回任何东西"，而实际上它根本没机会喵。
+        val ranked = decisions
+            .sortedByDescending { it.similarity }
+            .take(MAX_CANDIDATES)
+
         val request = UtilityLlmRouter.request(
             config = config,
             mainEndpoint = mainEndpoint,
             mainModel = mainModel,
             mainApiKey = mainApiKey,
             systemInstruction = SYSTEM_INSTRUCTION,
-            userContent = buildUserContent(query, decisions),
+            userContent = buildUserContent(query, ranked),
             jsonMode = true,
             // 判定要稳，不要创造力喵。
             temperature = 0.0,
@@ -133,41 +145,57 @@ object MemoryReranker {
             // 彻底变空——那正是用户抱怨的现象，而本功能的目的是让它更容易想起来喵。
             return RerankResult(decisions, RerankOutcome.UNUSABLE)
         }
-        // 候选编号全部越界：说明解析跑偏了（模型回的是别的数字）喵。
-        val valid = relevant.filter { index -> index in decisions.indices }.toSet()
-        if (valid.isEmpty()) return RerankResult(decisions, RerankOutcome.ERROR)
+        // 模型回的是**送给它的那份清单**里的编号，所以要经 `ranked` 翻回记忆 id喵。
+        // 用 id 而不是下标：ranked 与 decisions 的顺序不同，用下标极易错位，
+        // 而 id 是稳定的，翻错也会立刻表现为"一条都没匹配上"而不是悄悄错位喵。
+        val keptIds = relevant.mapNotNull { index -> ranked.getOrNull(index)?.memory?.id }.toSet()
+        if (keptIds.isEmpty()) return RerankResult(decisions, RerankOutcome.ERROR)
 
-        val applied = applyJudgement(decisions, valid, limit)
+        val applied = applyJudgement(decisions, keptIds, limit)
+        // **「救回几条」要按前后对比算**，不能靠 `roll` 猜喵。
+        // 之前这里写的是 `it.roll == 0.0`——而硬性屏蔽那条路的 roll 恰好是 0.0，
+        // 概率未中那条路的 roll 是一个真实的随机数喵。于是这个数字
+        // 只统计了"越过相似度门槛"的那类，把"越过骰子"的那类全漏掉了，
+        // 在自检页上会显示成一个偏小的数，还会让人以为精排没在工作喵。
+        val beforeRecalled = decisions.filter { it.recalled }.map { it.memory.id }.toSet()
         return RerankResult(
             decisions = applied,
             outcome = RerankOutcome.OK,
-            keptCount = valid.size,
-            rescuedCount = applied.count { it.recalled && it.reason == null && it.roll == 0.0 },
+            keptCount = keptIds.size,
+            rescuedCount = applied.count { it.recalled && it.memory.id !in beforeRecalled },
         )
     }
 
     /**
      * 把模型的判定套回候选上喵（纯函数，测试直接钉它）喵。
      *
-     * 规则三条，缺一不可喵：
+     * 规则四条，缺一不可喵：
      * 1. **模型说相关的可以越过骰子被唤醒**——这正是"救回来"的那一步，
      *    也是这个功能能真正解决"几乎没有记忆"的原因喵；
-     * 2. **模型说无关的不再注入**（除非它已经靠统计被唤醒并且是永久人设喵，
+     * 2. **模型说相关的也能越过相似度门槛**——门槛只会看词面，
+     *    而「他说累」与「他最近加班」在词面上零重叠、语义上却是一条线喵。
+     *    这正是统计检索做不到、必须靠模型补的那一段喵；
+     * 3. **模型说无关的不再注入**（除非它已经靠统计被唤醒并且是永久人设喵，
      *    永久人设免一切判定）喵；
-     * 3. **硬性屏蔽不可越过**：已淡忘、冷却中的记忆照样保持屏蔽喵。
+     * 4. **硬性屏蔽不可越过**：已淡忘、冷却中的记忆照样保持屏蔽喵。
      *    否则同一条记忆会因为"语义相关"被每轮反复捞回来喵。
      *
-     * @param relevant 模型判定为相关的**候选下标**喵
+     * @param relevantIds 模型判定为相关的**记忆 id** 喵
+     *
+     * 为什么是 id 而不是下标喵：送进模型的那份清单按相似度重排过，
+     * 与 `decisions` 的顺序不同。用下标会**悄悄错位**——
+     * 模型说"第 2 条相关"，而第 2 条其实是另一条记忆，界面还一切正常喵。
+     * id 是稳定的，翻错时表现为"一条都没匹配上"（立刻可发现）喵。
      */
     fun applyJudgement(
         decisions: List<RecallDecision>,
-        relevant: Set<Int>,
+        relevantIds: Set<Long>,
         limit: Int,
     ): List<RecallDecision> {
         val out = ArrayList<RecallDecision>(decisions.size)
         var kept = 0
-        decisions.forEachIndexed { index, decision ->
-            val isRelevant = index in relevant
+        decisions.forEach { decision ->
+            val isRelevant = decision.memory.id in relevantIds
             // 硬性屏蔽：模型不能翻案喵。
             val hardBlocked = decision.reason == RecallSkipReason.FADING ||
                 decision.reason == RecallSkipReason.COOLING_DOWN
@@ -183,8 +211,9 @@ object MemoryReranker {
             if (recalled) kept++
             out += decision.copy(
                 recalled = recalled,
-                // 被救回来的那条：把"概率未中"这个原因清掉，
-                // 否则调试页会显示"已唤醒"却又标着"概率未中"，自相矛盾喵。
+                // 被救回来的那条：把原有原因清掉，
+                // 否则调试页会显示"已唤醒"却又标着"概率未中"或"与当前话题无关"，
+                // 自相矛盾喵。
                 reason = if (recalled) null else decision.reason,
             )
         }
