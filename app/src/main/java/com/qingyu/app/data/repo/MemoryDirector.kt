@@ -158,14 +158,27 @@ class MemoryDirector(
      * 否则"自检页显示的记忆"和"实际发出去的记忆"根本不是同一批——喵
      * 自检页看起来有十几条，真正注入的只有 6 条，越查越糊涂喵。
      *
-     * 与真实请求的唯一差异：预览不推进轮次，所以骰子种子与冷却窗口喵
-     * 比真实那一轮早一格（真实轮次会先 `advanceTurn`）。规则一致、时相差一轮喵。
+     * 与真实请求的差异只有两处，都写在这里免得以后又踩喵：
+     *
+     * 1. **不推进轮次**喵。所以骰子种子与冷却窗口比真实那一轮早一格
+     *    （真实轮次会先 `advanceTurn`）。规则一致、时相差一轮喵。
+     * 2. **[withRerank] 为 false 时不走精排**喵。原因是硬性的：
+     *    自检页在 `remember` 里用 `runBlocking` 调这个方法，
+     *    也就是**跑在组合线程（主线程）上**喵。精排是一次网络请求，
+     *    把它放进来等于让主线程等最多 1.5 秒——那是会 ANR 的喵。
+     *
+     * 第 2 点是我上一版引入的隐患喵：当时只想着「预览必须忠实」，
+     * 就把精排也接进了 preview，却没注意到调用点在主线程上喵。
+     * 现在把选择权交给调用方，并要求界面**明说**这一次没走精排，
+     * 而不是让它悄悄显示一份少了精排的"忠实"结果喵。
      */
     suspend fun preview(
         personaId: Long,
         conversationId: Long,
         query: String,
         settings: AppSettings,
+        /** 是否在预览里跑精排（会发起网络请求，**绝不能在主线程上开**）喵。 */
+        withRerank: Boolean = false,
     ): MemoryContext {
         val temporal = peek(conversationId, settings)
         if (!settings.injectMemories) {
@@ -174,8 +187,17 @@ class MemoryDirector(
         // 用当前已落库的轮次，不推进它喵。
         val turn = db.memories.turnOf(conversationId).coerceAtLeast(1)
         val decisions = recallFor(personaId, query, turn, settings)
-        // 预览也走精排喵：否则自检页显示的记忆与实际注入的会不一样，
-        // 而"预览"这个功能的全部价值就在于**忠实**喵。
+        if (!withRerank) {
+            return MemoryContext(
+                turn = turn,
+                memories = MemoryRecall.recalled(decisions),
+                decisions = decisions,
+                temporal = temporal,
+                // 明确标成「未走精排」，而不是伪装成精排成功喵。
+                rerankOutcome = RerankOutcome.DISABLED,
+                rescuedCount = 0,
+            )
+        }
         val reranked = rerank(decisions, query, settings)
         return MemoryContext(
             turn = turn,
@@ -208,8 +230,22 @@ class MemoryDirector(
             items
         } else {
             // 粗召回：先按共同 term 收窄，再交给余弦打分喵。
-            val matched = db.memories.matchIds(personaId, queryTerms.keys)
-            if (matched.isEmpty()) emptyList() else items.filter { it.id in matched }
+            //
+            // **但开了 Reranker 时不能这样硬收窄** 喵。
+            // 这条收窄是「一点词面都不共享就彻底出局」，于是出现用户报的
+            // 另一半症状：「要么不注入」——他说「今天好累」，而记忆是
+            // 「他喜欢喝美式」时零重叠，连候选都进不去，
+            // 模型再会判断也没有东西可判喵。
+            //
+            // 开了精排就把全集交上去，让模型做语义判断；
+            // 没开精排时保留收窄——那种情况下结果与相似度门槛等价，
+            // 只是省掉了一次全表打分，是纯优化喵。
+            if (settings.memoryRerankerEnabled) {
+                items
+            } else {
+                val matched = db.memories.matchIds(personaId, queryTerms.keys)
+                if (matched.isEmpty()) emptyList() else items.filter { it.id in matched }
+            }
         }
         if (corpus.isEmpty()) return emptyList()
 
