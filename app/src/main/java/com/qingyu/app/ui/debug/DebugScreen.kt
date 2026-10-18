@@ -278,8 +278,11 @@ private fun rerankLine(snapshot: ContextSnapshot?): String {
         outcome == RerankOutcome.UNUSABLE -> "$base（模型把候选全判成无关，已退回统计结果）"
         outcome == RerankOutcome.TIMEOUT -> "$base（模型没在时限内返回，已退回统计结果）"
         outcome == RerankOutcome.NO_CONFIG -> "$base（缺地址或 Key，检查设置里的小模型服务商）"
-        outcome == RerankOutcome.DISABLED -> "$base（在设置里打开「Reranker 精排」才会走这一步）"
-        else -> base
+        // **预览必须自己说明这一条**喵：预览跑在主线程上，所以刻意不发起
+        // 精排那次网络请求（否则会 ANR）喵。不写明的话，用户会以为
+        // 「精排没工作」，而真相是「这一页没跑精排」喵。
+        snapshot == null -> "$base（预览模式不跑精排：它要发网络请求，而这里在主线程上。真实结果见发过消息后的留档）"
+        else -> "$base（在设置里打开「Reranker 精排」才会走这一步）"
     }
 }
 
