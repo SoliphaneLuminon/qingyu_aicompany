@@ -37,9 +37,10 @@ class MemoryRerankerTest {
         reason: RecallSkipReason?,
         permanent: Boolean = false,
         roll: Double = 0.0,
+        similarity: Double = 0.5,
     ) = RecallDecision(
         memory = item(id, text, permanent),
-        similarity = 0.5,
+        similarity = similarity,
         probability = 0.2,
         roll = roll,
         recalled = recalled,
@@ -82,7 +83,7 @@ class MemoryRerankerTest {
         val decisions = listOf(
             decision(1, "他喜欢喝美式", recalled = false, reason = RecallSkipReason.LOST_ROLL, roll = 0.9),
         )
-        val out = MemoryReranker.applyJudgement(decisions, relevant = setOf(0), limit = 6)
+        val out = MemoryReranker.applyJudgement(decisions, relevantIds = setOf(1L), limit = 6)
         assertTrue("相关的那条该被救回来", out[0].recalled)
         assertNull("救回来之后不该再标着概率未中", out[0].reason)
     }
@@ -92,7 +93,7 @@ class MemoryRerankerTest {
         val decisions = listOf(
             decision(1, "他喜欢喝美式", recalled = true, reason = null),
         )
-        val out = MemoryReranker.applyJudgement(decisions, relevant = emptySet(), limit = 6)
+        val out = MemoryReranker.applyJudgement(decisions, relevantIds = emptySet(), limit = 6)
         assertFalse("模型判无关就不该注入", out[0].recalled)
     }
 
@@ -103,7 +104,7 @@ class MemoryRerankerTest {
         val decisions = listOf(
             decision(1, "很久以前的事", recalled = false, reason = RecallSkipReason.FADING),
         )
-        val out = MemoryReranker.applyJudgement(decisions, relevant = setOf(0), limit = 6)
+        val out = MemoryReranker.applyJudgement(decisions, relevantIds = setOf(1L), limit = 6)
         assertFalse("已淡忘的不该被救回来", out[0].recalled)
     }
 
@@ -114,7 +115,7 @@ class MemoryRerankerTest {
         val decisions = listOf(
             decision(1, "刚说过的事", recalled = false, reason = RecallSkipReason.COOLING_DOWN),
         )
-        val out = MemoryReranker.applyJudgement(decisions, relevant = setOf(0), limit = 6)
+        val out = MemoryReranker.applyJudgement(decisions, relevantIds = setOf(1L), limit = 6)
         assertFalse("冷却中的不该被救回来", out[0].recalled)
     }
 
@@ -124,7 +125,7 @@ class MemoryRerankerTest {
         val decisions = listOf(
             decision(1, "你是小语", recalled = true, reason = null, permanent = true),
         )
-        val out = MemoryReranker.applyJudgement(decisions, relevant = emptySet(), limit = 6)
+        val out = MemoryReranker.applyJudgement(decisions, relevantIds = emptySet(), limit = 6)
         assertTrue("人设不该被模型剔除", out[0].recalled)
     }
 
@@ -133,7 +134,7 @@ class MemoryRerankerTest {
         val decisions = (1..5).map {
             decision(it.toLong(), "记忆$it", recalled = false, reason = RecallSkipReason.LOST_ROLL)
         }
-        val out = MemoryReranker.applyJudgement(decisions, relevant = setOf(0, 1, 2, 3, 4), limit = 2)
+        val out = MemoryReranker.applyJudgement(decisions, relevantIds = setOf(1L, 2L, 3L, 4L, 5L), limit = 2)
         assertEquals("最多只能注入 2 条", 2, out.count { it.recalled })
     }
 
@@ -143,7 +144,7 @@ class MemoryRerankerTest {
         val decisions = listOf(
             decision(1, "已经醒了的", recalled = true, reason = null),
         )
-        val out = MemoryReranker.applyJudgement(decisions, relevant = setOf(0), limit = 6)
+        val out = MemoryReranker.applyJudgement(decisions, relevantIds = setOf(1L), limit = 6)
         assertTrue(out[0].recalled)
     }
 
@@ -183,6 +184,82 @@ class MemoryRerankerTest {
         assertFalse(
             "不该包含第 ${MemoryReranker.MAX_CANDIDATES + 1} 条",
             text.contains("记忆${MemoryReranker.MAX_CANDIDATES + 1}."),
+        )
+    }
+
+    // ---------------------------------------------------------- 越过词面门槛
+
+    @Test
+    fun `模型判相关可以越过词面门槛`() {
+        // 用户报的另一半症状是「要么不注入」喵：他说「今天好累」，
+        // 而记忆是「他最近总加班」——词面零重叠，相似度门槛把它挡掉了喵。
+        // 但语义上这正该被想起来。这是统计检索做不到、必须靠模型补的一段喵。
+        val gated = decision(
+            id = 1L,
+            text = "他最近总加班",
+            recalled = false,
+            reason = RecallSkipReason.IRRELEVANT,
+        )
+        val out = MemoryReranker.applyJudgement(listOf(gated), relevantIds = setOf(1L), limit = 6)
+        assertTrue("被词面门槛挡掉、但语义相关的该被救回来", out[0].recalled)
+        assertNull("救回来之后不该还标着不相关", out[0].reason)
+    }
+
+    @Test
+    fun `越过门槛的也算被救回`() {
+        // 「救回几条」这个数字在自检页上是判断精排有没有在工作的唯一依据喵。
+        // 之前它靠 `roll == 0.0` 统计，把「越过骰子」那类全漏掉了，
+        // 显示出来是个偏小的数，还会让人以为精排没在工作喵。
+        val gated = decision(1L, "他最近总加班", false, RecallSkipReason.IRRELEVANT)
+        val lostRoll = decision(2L, "他喜欢喝美式", false, RecallSkipReason.LOST_ROLL, roll = 0.77)
+        val rescued = MemoryReranker.applyJudgement(
+            decisions = listOf(gated, lostRoll),
+            relevantIds = setOf(1L, 2L),
+            limit = 6,
+        )
+        val before = setOf<Long>()
+        val count = rescued.count { it.recalled && it.memory.id !in before }
+        assertEquals("两条都该算被救回", 2, count)
+    }
+
+    @Test
+    fun `送进模型的清单按相似度重排`() {
+        // 传进来的顺序是综合得分，而综合分里重要度(0.25)加鲜活度(0.20)
+        // 比相似度(0.30)还重——不重排的话，12 个名额会被「分数高但无关」的占满，
+        // 真正相关的那条压根没被送给模型看，精排于是永远救不回东西喵。
+        val captured = java.util.concurrent.atomic.AtomicReference<String>("")
+        val fake = UtilityLlm { request ->
+            captured.set(request.userContent)
+            "[1]"
+        }
+        val highScoreButIrrelevant = decision(
+            id = 1L, text = "用户喜欢喝美式咖啡",
+            recalled = false, reason = RecallSkipReason.IRRELEVANT, similarity = 0.0,
+        )
+        val mostRelevant = decision(
+            id = 2L, text = "他最近总加班",
+            recalled = false, reason = RecallSkipReason.IRRELEVANT, similarity = 0.9,
+        )
+        kotlinx.coroutines.runBlocking {
+            MemoryReranker.rerank(
+                decisions = listOf(highScoreButIrrelevant, mostRelevant),
+                query = "今天好累",
+                recalledCount = 0,
+                limit = 6,
+                config = UtilityLlmConfig(enabled = true),
+                llm = fake,
+                mainEndpoint = "https://example.com/v1/chat/completions",
+                mainModel = "m",
+                mainApiKey = "k",
+            )
+        }
+        val content = captured.get()
+        val relevantAt = content.indexOf("他最近总加班")
+        val irrelevantAt = content.indexOf("用户喜欢喝美式咖啡")
+        assertTrue("两条都该被送到模型面前：$content", relevantAt >= 0 && irrelevantAt >= 0)
+        assertTrue(
+            "相似度高的那条该排在前面（先出现），实际内容：$content",
+            relevantAt < irrelevantAt,
         )
     }
 }
